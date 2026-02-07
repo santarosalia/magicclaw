@@ -1,39 +1,49 @@
 import Link from 'next/link';
+import { MessageSquare, Server } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function Home() {
   return (
-    <main style={{ padding: '2rem', maxWidth: 720, margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>MagicClaw</h1>
-      <p style={{ color: 'var(--muted)', marginBottom: '2rem' }}>
-        AI 에이전트 + MCP 서버 관리 (openclaw 참고)
-      </p>
-      <nav style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-        <Link
-          href="/chat"
-          style={{
-            padding: '0.75rem 1.25rem',
-            background: 'var(--accent)',
-            color: '#fff',
-            borderRadius: 8,
-            fontWeight: 600,
-          }}
-        >
-          채팅 (도구 사용)
-        </Link>
-        <Link
-          href="/mcp"
-          style={{
-            padding: '0.75rem 1.25rem',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            fontWeight: 600,
-          }}
-        >
-          MCP 서버 관리
-        </Link>
-      </nav>
+    <main className="min-h-screen flex flex-col items-center justify-center p-6">
+      <div className="max-w-lg w-full space-y-8 text-center">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">MagicClaw</h1>
+          <p className="text-muted-foreground mt-2">
+            AI 에이전트 + MCP 서버 관리 (openclaw 참고)
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <MessageSquare className="h-5 w-5" />
+                채팅
+              </CardTitle>
+              <CardDescription>도구를 사용하는 AI와 대화합니다.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild className="w-full">
+                <Link href="/chat">채팅 (도구 사용)</Link>
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Server className="h-5 w-5" />
+                MCP 서버
+              </CardTitle>
+              <CardDescription>MCP 서버를 등록하고 관리합니다.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/mcp">MCP 서버 관리</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </main>
   );
 }

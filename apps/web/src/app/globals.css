@@ -1,39 +1,65 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* shadcn: CSS 변수 (hsl 래핑) */
 :root {
-  --bg: #0f0f12;
-  --surface: #1a1a1f;
-  --border: #2a2a32;
-  --text: #e8e8ed;
-  --muted: #8888a0;
-  --accent: #7c6ef6;
-  --accent-hover: #9388f7;
+  --background: hsl(240 10% 6%);
+  --foreground: hsl(240 9% 92%);
+  --card: hsl(240 10% 10%);
+  --card-foreground: hsl(240 9% 92%);
+  --popover: hsl(240 10% 10%);
+  --popover-foreground: hsl(240 9% 92%);
+  --primary: hsl(250 84% 68%);
+  --primary-foreground: hsl(240 10% 6%);
+  --secondary: hsl(240 6% 18%);
+  --secondary-foreground: hsl(240 9% 92%);
+  --muted: hsl(240 6% 18%);
+  --muted-foreground: hsl(240 5% 55%);
+  --accent: hsl(240 6% 18%);
+  --accent-foreground: hsl(240 9% 92%);
+  --destructive: hsl(0 84% 60%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --border: hsl(240 6% 18%);
+  --input: hsl(240 6% 18%);
+  --ring: hsl(250 84% 68%);
+  --radius: 0.75rem;
 }
 
-* {
-  box-sizing: border-box;
+/* Tailwind v4: @theme inline으로 유틸리티(bg-background 등)에 연결 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
-body {
-  margin: 0;
-  font-family: 'DM Sans', system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-a:hover {
-  color: var(--accent-hover);
-}
-
-button {
-  cursor: pointer;
-  font: inherit;
-}
-
-input, textarea {
-  font: inherit;
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
 }

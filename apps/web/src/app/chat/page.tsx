@@ -2,6 +2,10 @@
 
 import { useCallback, useState } from 'react';
 import Link from 'next/link';
+import { ArrowLeft, Send } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 
@@ -33,7 +37,9 @@ export default function ChatPage() {
         ...prev,
         {
           role: 'assistant',
-          content: data.message + (data.toolCallsUsed ? ` (도구 ${data.toolCallsUsed}회 사용)` : ''),
+          content:
+            data.message +
+            (data.toolCallsUsed ? ` (도구 ${data.toolCallsUsed}회 사용)` : ''),
         },
       ]);
     } catch (err) {
@@ -50,82 +56,59 @@ export default function ChatPage() {
   }, [input, loading, messages]);
 
   return (
-    <main style={{ maxWidth: 720, margin: '0 auto', padding: '1.5rem', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: '1rem' }}>
-        <Link href="/" style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>← 홈</Link>
+    <main className="max-w-2xl mx-auto min-h-screen flex flex-col p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Button variant="ghost" size="icon" asChild>
+          <Link href="/">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+        </Button>
+        <h1 className="text-xl font-semibold">채팅 (도구 사용)</h1>
       </div>
-      <h1 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>채팅 (도구 사용)</h1>
-      <div
-        style={{
-          flex: 1,
-          overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1rem',
-          padding: '1rem 0',
-        }}
-      >
-        {messages.length === 0 && (
-          <p style={{ color: 'var(--muted)' }}>메시지를 입력하면 등록된 MCP 도구를 사용할 수 있습니다.</p>
-        )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-              maxWidth: '85%',
-              padding: '0.75rem 1rem',
-              borderRadius: 12,
-              background: m.role === 'user' ? 'var(--accent)' : 'var(--surface)',
-              border: '1px solid var(--border)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {m.content}
-          </div>
-        ))}
-        {loading && (
-          <div style={{ color: 'var(--muted)', padding: '0.5rem 0' }}>응답 중...</div>
-        )}
-      </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-        style={{ display: 'flex', gap: '0.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}
-      >
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="메시지 입력..."
-          disabled={loading}
-          style={{
-            flex: 1,
-            padding: '0.75rem 1rem',
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            color: 'var(--text)',
+
+      <Card className="flex-1 flex flex-col min-h-0">
+        <CardContent className="flex-1 overflow-auto p-4 space-y-4">
+          {messages.length === 0 && (
+            <p className="text-muted-foreground text-sm text-center py-8">
+              메시지를 입력하면 등록된 MCP 도구를 사용할 수 있습니다.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              className={
+                m.role === 'user'
+                  ? 'ml-auto max-w-[85%] rounded-lg bg-primary text-primary-foreground px-4 py-2'
+                  : 'mr-auto max-w-[85%] rounded-lg border bg-card px-4 py-2'
+              }
+            >
+              <p className="text-sm whitespace-pre-wrap break-words">{m.content}</p>
+            </div>
+          ))}
+          {loading && (
+            <p className="text-muted-foreground text-sm">응답 중...</p>
+          )}
+        </CardContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
           }}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          style={{
-            padding: '0.75rem 1.25rem',
-            background: 'var(--accent)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 8,
-            fontWeight: 600,
-          }}
+          className="p-4 border-t flex gap-2"
         >
-          전송
-        </button>
-      </form>
+          <Input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="메시지 입력..."
+            disabled={loading}
+            className="flex-1"
+          />
+          <Button type="submit" disabled={loading || !input.trim()} size="icon">
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+      </Card>
     </main>
   );
 }
