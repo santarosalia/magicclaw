@@ -15,9 +15,7 @@ export default function Home() {
       <div className="max-w-lg w-full space-y-8 text-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">MagicClaw</h1>
-          <p className="text-muted-foreground mt-2">
-            AI 에이전트 + MCP 서버 관리
-          </p>
+          <p className="text-muted-foreground mt-2">AI Agent with MCP</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Card className="transition-colors hover:bg-accent/50">
@@ -32,7 +30,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <Button asChild className="w-full">
-                <Link href="/chat">채팅 (도구 사용)</Link>
+                <Link href="/chat">채팅</Link>
               </Button>
             </CardContent>
           </Card>
