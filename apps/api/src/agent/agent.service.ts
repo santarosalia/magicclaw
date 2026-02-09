@@ -43,7 +43,7 @@ function mcpToolToOpenAI(t: {
 @Injectable()
 export class AgentService {
   private openai: OpenAI | null = null;
-
+  private toolServerCache = new Map<string, McpServerConfig>();
   constructor(
     private readonly mcpStore: McpStoreService,
     private readonly llmStore: LlmStoreService
@@ -88,15 +88,18 @@ export class AgentService {
   }
 
   /** Resolve which MCP server has this tool (by re-listing; can be optimized with cache). */
-  private async findServerForTool(
-    toolName: string
-  ): Promise<McpServerConfig | undefined> {
-    const servers = this.mcpStore.findAll();
-    for (const server of servers) {
-      const result = await listToolsFromMcpServer(server);
-      if (result.tools.some((t) => t.name === toolName)) return server;
+  private async findServerForTool(toolName: string) {
+    if (this.toolServerCache.has(toolName)) {
+      return this.toolServerCache.get(toolName);
     }
-    return undefined;
+
+    for (const server of this.mcpStore.findAll()) {
+      const result = await listToolsFromMcpServer(server);
+      if (result.tools.some((t) => t.name === toolName)) {
+        this.toolServerCache.set(toolName, server);
+        return server;
+      }
+    }
   }
 
   /** Execute one tool call via MCP and return content for the assistant message. */
@@ -116,15 +119,14 @@ export class AgentService {
   async chat(options: AgentChatOptions): Promise<AgentChatResult> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
-    const { messages, model = defaultModel, maxToolRounds = 5 } = options;
+    const { messages, model = defaultModel, maxToolRounds = 2000 } = options;
 
     const openaiClient = this.getOpenAIClient(model);
 
     const mcpTools = await this.getMcpToolsAsOpenAI();
     const systemMessage: OpenAI.Chat.ChatCompletionMessageParam = {
       role: "system",
-      content:
-        "You are a helpful assistant. When you need to perform actions (search, read files, etc.), use the provided tools. Reply in the same language as the user when appropriate.",
+      content: `You are a helpful assistant. When you need to perform actions (search, read files, etc.), use the provided tools. Reply in the same language as the user when appropriate.`,
     };
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       systemMessage,
@@ -167,11 +169,12 @@ export class AgentService {
           | Array<{ type?: string; text?: string }>
           | null
           | undefined;
+
         const content =
           typeof raw === "string"
             ? raw
             : Array.isArray(raw)
-            ? raw.map((c) => (c.type === "text" ? c.text ?? "" : "")).join("")
+            ? JSON.stringify(raw)
             : "";
         return { message: content, toolCallsUsed };
       }

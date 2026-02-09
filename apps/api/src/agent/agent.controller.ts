@@ -1,28 +1,40 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
-import type { AgentChatOptions, ChatMessage } from './agent.service.js';
-import { AgentService } from './agent.service.js';
+import { Body, Controller, Get, Post } from "@nestjs/common";
+import type { AgentChatOptions, ChatMessage } from "./agent.service.js";
+import { AgentService } from "./agent.service.js";
 
-@Controller('agent')
+@Controller("agent")
 export class AgentController {
   constructor(private readonly agent: AgentService) {}
 
-  @Get('tools')
-  async listTools(): Promise<{ tools: { name: string; description?: string }[] }> {
+  @Get("tools")
+  async listTools(): Promise<{
+    tools: { name: string; description?: string }[];
+  }> {
     const openaiTools = await this.agent.getMcpToolsAsOpenAI();
     const tools = openaiTools
-      .filter((t): t is { type: 'function'; function: { name: string; description?: string } } => t.type === 'function')
-      .map((t) => ({ name: t.function.name, description: t.function.description }));
+      .filter(
+        (
+          t
+        ): t is {
+          type: "function";
+          function: { name: string; description?: string };
+        } => t.type === "function"
+      )
+      .map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+      }));
     return { tools };
   }
 
-  @Post('chat')
+  @Post("chat")
   async chat(
     @Body()
     body: {
       messages?: ChatMessage[];
       model?: string;
       maxToolRounds?: number;
-    },
+    }
   ) {
     const messages = body.messages ?? [];
     const result = await this.agent.chat({
