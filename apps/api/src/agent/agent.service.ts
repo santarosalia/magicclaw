@@ -19,9 +19,15 @@ export interface AgentChatOptions {
   maxToolRounds?: number;
 }
 
+export interface ToolCallEntry {
+  name: string;
+  args: Record<string, unknown>;
+}
+
 export interface AgentChatResult {
   message: string;
   toolCallsUsed: number;
+  toolCalls: ToolCallEntry[];
 }
 
 /** Map MCP tool to OpenAI tool definition format */
@@ -139,6 +145,7 @@ export class AgentService {
       ),
     ];
 
+    const toolCallsLog: ToolCallEntry[] = [];
     let toolCallsUsed = 0;
     let round = 0;
 
@@ -156,6 +163,7 @@ export class AgentService {
         return {
           message: "No response from model.",
           toolCallsUsed,
+          toolCalls: toolCallsLog,
         };
       }
 
@@ -176,7 +184,7 @@ export class AgentService {
             : Array.isArray(raw)
             ? JSON.stringify(raw)
             : "";
-        return { message: content, toolCallsUsed };
+        return { message: content, toolCallsUsed, toolCalls: toolCallsLog };
       }
 
       for (const tc of toolCalls) {
@@ -187,6 +195,7 @@ export class AgentService {
         } catch {
           // ignore
         }
+        toolCallsLog.push({ name, args });
         const result = await this.executeToolCall(name, args);
         toolCallsUsed++;
         openaiMessages.push({
@@ -201,6 +210,7 @@ export class AgentService {
     return {
       message: "Max tool rounds reached; ending turn.",
       toolCallsUsed,
+      toolCalls: toolCallsLog,
     };
   }
 }
