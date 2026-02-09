@@ -1,7 +1,13 @@
-import Link from 'next/link';
-import { MessageSquare, Server, Brain } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import Link from "next/link";
+import { MessageSquare, Server, Brain } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 export default function Home() {
   return (
@@ -10,7 +16,7 @@ export default function Home() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">MagicClaw</h1>
           <p className="text-muted-foreground mt-2">
-            AI 에이전트 + MCP 서버 관리 (openclaw 참고)
+            AI 에이전트 + MCP 서버 관리
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -20,7 +26,9 @@ export default function Home() {
                 <MessageSquare className="h-5 w-5" />
                 채팅
               </CardTitle>
-              <CardDescription>도구를 사용하는 AI와 대화합니다.</CardDescription>
+              <CardDescription>
+                도구를 사용하는 AI와 대화합니다.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild className="w-full">
@@ -48,7 +56,9 @@ export default function Home() {
                 <Brain className="h-5 w-5" />
                 LLM 설정
               </CardTitle>
-              <CardDescription>로컬 LLM 또는 OpenAI 호환 API를 설정합니다.</CardDescription>
+              <CardDescription>
+                로컬 LLM 또는 OpenAI 호환 API를 설정합니다.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" className="w-full">

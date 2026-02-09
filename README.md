@@ -1,6 +1,6 @@
 # MagicClaw
 
-OpenClaw를 참고한 **AI 에이전트** 프로젝트입니다. **MCP(Model Context Protocol)** 서버를 등록·관리하고, 채팅 시 해당 도구를 사용할 수 있습니다.
+**AI 에이전트** 프로젝트입니다. **MCP(Model Context Protocol)** 서버를 등록·관리하고, 채팅 시 해당 도구를 사용할 수 있습니다.
 
 ## 구조
 
