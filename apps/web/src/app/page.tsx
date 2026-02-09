@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { MessageSquare, Server } from 'lucide-react';
+import { MessageSquare, Server, Brain } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -39,6 +39,20 @@ export default function Home() {
             <CardContent>
               <Button asChild variant="outline" className="w-full">
                 <Link href="/mcp">MCP 서버 관리</Link>
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Brain className="h-5 w-5" />
+                LLM 설정
+              </CardTitle>
+              <CardDescription>로컬 LLM 또는 OpenAI 호환 API를 설정합니다.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/llm">LLM 설정 관리</Link>
               </Button>
             </CardContent>
           </Card>

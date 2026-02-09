@@ -1,14 +1,39 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type {
   CreateMcpServerDto,
   McpServerConfig,
   UpdateMcpServerDto,
 } from './dto/mcp-server.dto.js';
+import { FileStoreService } from '../common/file-store.service.js';
+
+interface McpStoreData {
+  servers: Record<string, McpServerConfig>;
+}
 
 @Injectable()
-export class McpStoreService {
+export class McpStoreService extends FileStoreService implements OnModuleInit {
   private servers = new Map<string, McpServerConfig>();
+  private readonly STORE_FILE = 'mcp-servers.json';
+
+  onModuleInit() {
+    this.loadFromFile();
+  }
+
+  private loadFromFile(): void {
+    const data = this.readFile<McpStoreData>(
+      this.STORE_FILE,
+      { servers: {} }
+    );
+    this.servers = new Map(Object.entries(data.servers));
+  }
+
+  private saveToFile(): void {
+    const data: McpStoreData = {
+      servers: Object.fromEntries(this.servers),
+    };
+    this.writeFile(this.STORE_FILE, data);
+  }
 
   findAll(): McpServerConfig[] {
     return Array.from(this.servers.values()).sort(
@@ -32,6 +57,7 @@ export class McpStoreService {
       createdAt: new Date().toISOString(),
     };
     this.servers.set(id, config);
+    this.saveToFile();
     return config;
   }
 
@@ -46,10 +72,15 @@ export class McpStoreService {
       ...(dto.env !== undefined && { env: dto.env }),
     };
     this.servers.set(id, updated);
+    this.saveToFile();
     return updated;
   }
 
   remove(id: string): boolean {
-    return this.servers.delete(id);
+    const deleted = this.servers.delete(id);
+    if (deleted) {
+      this.saveToFile();
+    }
+    return deleted;
   }
 }

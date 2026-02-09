@@ -6,6 +6,10 @@ import { ArrowLeft, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import rehypeRaw from 'rehype-raw';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 
@@ -82,7 +86,32 @@ export default function ChatPage() {
                   : 'mr-auto max-w-[85%] rounded-lg border bg-card px-4 py-2'
               }
             >
-              <p className="text-sm whitespace-pre-wrap break-words">{m.content}</p>
+              {m.role === 'user' ? (
+                <p className="text-sm whitespace-pre-wrap break-words">{m.content}</p>
+              ) : (
+                <div className="markdown-content prose prose-invert max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                    components={{
+                      code: ({ node, inline, className, children, ...props }) => {
+                        const match = /language-(\w+)/.exec(className || '');
+                        return !inline && match ? (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        ) : (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
+                </div>
+              )}
             </div>
           ))}
           {loading && (

@@ -19,6 +19,7 @@ type McpServer = {
   type: string;
   command: string;
   args: string[];
+  env?: Record<string, string>;
   createdAt: string;
 };
 
@@ -32,6 +33,7 @@ export default function McpPage() {
     name: '',
     command: 'npx',
     args: '-y @modelcontextprotocol/server-everything',
+    env: '',
   });
   const [saving, setSaving] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
@@ -54,6 +56,31 @@ export default function McpPage() {
     setLoading(true);
     fetchServers().finally(() => setLoading(false));
   }, [fetchServers]);
+
+  const parseEnv = (envString: string): Record<string, string> | undefined => {
+    if (!envString.trim()) return undefined;
+    try {
+      // JSON 형식으로 파싱 시도
+      const parsed = JSON.parse(envString);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, string>;
+      }
+    } catch {
+      // JSON이 아니면 KEY=VALUE 형식으로 파싱
+      const lines = envString.split('\n').filter((line) => line.trim());
+      const env: Record<string, string> = {};
+      for (const line of lines) {
+        const match = line.match(/^([^=]+)=(.*)$/);
+        if (match) {
+          const key = match[1].trim();
+          const value = match[2].trim();
+          env[key] = value;
+        }
+      }
+      return Object.keys(env).length > 0 ? env : undefined;
+    }
+    return undefined;
+  };
 
   const addFromCatalog = async (entry: McpCatalogEntry) => {
     if (addingId) return;
@@ -81,6 +108,7 @@ export default function McpPage() {
     setSaving(true);
     try {
       const args = form.args.trim().split(/\s+/).filter(Boolean);
+      const env = parseEnv(form.env);
       await fetch('/api/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -89,9 +117,10 @@ export default function McpPage() {
           type: 'stdio',
           command: form.command.trim() || 'npx',
           args: args.length ? args : ['-y', '@modelcontextprotocol/server-everything'],
+          env,
         }),
       });
-      setForm({ name: '', command: 'npx', args: '-y @modelcontextprotocol/server-everything' });
+      setForm({ name: '', command: 'npx', args: '-y @modelcontextprotocol/server-everything', env: '' });
       await fetchServers();
     } finally {
       setSaving(false);
@@ -199,6 +228,20 @@ export default function McpPage() {
                 onChange={(e) => setForm((f) => ({ ...f, args: e.target.value }))}
               />
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">환경 변수 (선택사항)</label>
+              <textarea
+                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder='DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key'
+                value={form.env}
+                onChange={(e) => setForm((f) => ({ ...f, env: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                KEY=VALUE 형식으로 한 줄에 하나씩 입력하거나, JSON 형식으로 입력할 수 있습니다.
+                <br />
+                예: DATABASE_URI=postgresql://localhost/db
+              </p>
+            </div>
             <Button type="submit" disabled={saving || !form.name.trim()}>
               추가
             </Button>
@@ -231,6 +274,18 @@ export default function McpPage() {
                       <p className="text-sm text-muted-foreground font-mono mt-1">
                         {s.command} {s.args.join(' ')}
                       </p>
+                      {s.env && Object.keys(s.env).length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">환경 변수:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {Object.entries(s.env).map(([key, value]) => (
+                              <Badge key={key} variant="outline" className="text-xs font-mono">
+                                {key}={value.length > 20 ? `${value.substring(0, 20)}...` : value}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {(toolsByServer[s.id]?.length ?? 0) > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {toolsByServer[s.id].slice(0, 8).map((t) => (
