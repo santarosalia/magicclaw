@@ -37,20 +37,16 @@
         "to": "api-dist/node_modules"
       },
       {
-        "from": "../web/.next",
-        "to": "web-next/.next"
+        "from": "../web/.next/standalone",
+        "to": "web-next"
       },
       {
-        "from": "../web/node_modules",
-        "to": "web-next/node_modules"
+        "from": "../web/.next/static",
+        "to": "web-next/.next/static"
       },
       {
-        "from": "../web/package.json",
-        "to": "web-next/package.json"
-      },
-      {
-        "from": "../web/next.config.ts",
-        "to": "web-next/next.config.ts"
+        "from": "../web/public",
+        "to": "web-next/public"
       }
     ],
     "mac": {

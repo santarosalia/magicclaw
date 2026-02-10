@@ -83,14 +83,15 @@ function startProdServers() {
   });
 
   // Next Web (web-next/.next, node_modules/next → next start -p 3000)
-  const nodeModulesDir = path.join(resourcesBase, "web-next", "node_modules");
-  const nextBin = path.join(nodeModulesDir, "next", "dist", "bin", "next");
+  // const nodeModulesDir = path.join(resourcesBase, "web-next", "node_modules");
+  // const nextBin = path.join(nodeModulesDir, "next", "dist", "bin", "next");
   const webNextDir = path.join(resourcesBase, "web-next");
+  const serverJs = path.join(webNextDir, "server.js");
 
-  webProcess = spawn(process.execPath, [nextBin, "start", "-p", "3000"], {
+  webProcess = spawn(process.execPath, [serverJs], {
     cwd: webNextDir,
     stdio: "inherit",
-    env: { ...commonEnv, NODE_ENV: "production" },
+    env: { ...commonEnv, PORT: "3000" },
   });
 }
 
