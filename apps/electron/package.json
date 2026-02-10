@@ -35,14 +35,14 @@
       {
         "from": "../api/node_modules",
         "to": "api-dist/node_modules"
-       },
-       {
-        "from": "../web/.next",
-        "to": "web-next"
       },
       {
-         "from": "../web/node_modules",
-         "to": "node_modules"
+        "from": "../web/.next",
+        "to": "web-next/.next"
+      },
+      {
+        "from": "../web/node_modules",
+        "to": "node_modules"
       }
     ],
     "mac": {
