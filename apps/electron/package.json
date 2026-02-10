@@ -27,6 +27,20 @@
       "dist/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "../api/dist",
+        "to": "api-dist"
+      },
+      {
+        "from": "../web/.next",
+        "to": "web-next"
+      },
+      {
+        "from": "../web/node_modules/next",
+        "to": "node_modules/next"
+      }
+    ],
     "mac": {
       "target": [
         "dmg",

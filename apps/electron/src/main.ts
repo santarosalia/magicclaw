@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: ChildProcess | null = null;
@@ -64,9 +64,9 @@ async function createWindow() {
 function startProdServers() {
   if (isDev) return;
 
-  // ts-node가 아닌 빌드 산출물(api: dist/main.js, web: next start)을 사용해서 서버를 띄운다.
-  // 경로 기준점: apps/electron/dist → repo 루트: ../../..
-  const repoRoot = path.resolve(__dirname, "..", "..", "..");
+  // 패키징된 앱 기준으로, electron-builder가 extraResources로 복사한
+  // 빌드 산출물(api-dist, web-next, node_modules)을 사용해서 서버를 띄운다.
+  const resourcesBase = process.resourcesPath;
 
   // Electron이 내장한 Node 런타임을 그대로 사용해서 서버들을 실행한다.
   const commonEnv = {
@@ -74,26 +74,21 @@ function startProdServers() {
     ELECTRON_RUN_AS_NODE: "1",
   };
 
-  // Nest API (apps/api/dist/main.js)
-  const apiMain = path.join(repoRoot, "apps", "api", "dist", "main.js");
+  // Nest API (api-dist/main.js)
+  const apiMain = path.join(resourcesBase, "api-dist", "main.js");
   apiProcess = spawn(process.execPath, [apiMain], {
     cwd: path.dirname(apiMain),
     stdio: "inherit",
     env: commonEnv,
   });
 
-  // Next Web (apps/web/.next → next start -p 3000)
-  const webDir = path.join(repoRoot, "apps", "web");
-  const nextBin = path.join(
-    webDir,
-    "node_modules",
-    "next",
-    "dist",
-    "bin",
-    "next"
-  );
+  // Next Web (web-next/.next, node_modules/next → next start -p 3000)
+  const nodeModulesDir = path.join(resourcesBase, "node_modules");
+  const nextBin = path.join(nodeModulesDir, "next", "dist", "bin", "next");
+  const webNextDir = path.join(resourcesBase, "web-next");
+
   webProcess = spawn(process.execPath, [nextBin, "start", "-p", "3000"], {
-    cwd: webDir,
+    cwd: webNextDir,
     stdio: "inherit",
     env: { ...commonEnv, NODE_ENV: "production" },
   });
