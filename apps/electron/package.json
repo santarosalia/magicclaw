@@ -1,0 +1,17 @@
+{
+  "name": "electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && electron .",
+    "build": "tsc -p tsconfig.json",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@types/electron": "^1.6.10",
+    "@types/node": "^22.0.0",
+    "electron": "^32.1.2",
+    "typescript": "^5.7.0"
+  }
+}
