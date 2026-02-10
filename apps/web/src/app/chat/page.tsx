@@ -154,12 +154,9 @@ export default function ChatPage() {
 
         <Card className="overflow-hidden flex-1 h-full">
           <CardContent className="p-2 h-full flex flex-col">
-            <p className="text-xs text-muted-foreground mb-2 px-1">
-              Tool calls
-            </p>
             <ToolCallFlow
               toolCalls={toolCallsCache}
-              className="w-full rounded-md flex flex-1"
+              className="w-full rounded-md flex-1"
             />
           </CardContent>
         </Card>
