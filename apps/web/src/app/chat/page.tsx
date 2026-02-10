@@ -69,7 +69,7 @@ export default function ChatPage() {
   }, [input, loading, messages]);
 
   return (
-    <main className="min-h-screen flex flex-col p-6">
+    <main className="h-screen flex flex-col p-6">
       <div className="flex items-center gap-2 mb-4">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
@@ -78,7 +78,7 @@ export default function ChatPage() {
         </Button>
         <h1 className="text-xl font-semibold">채팅</h1>
       </div>
-      <div className="flex gap-4">
+      <div className="flex flex-1 gap-4 min-h-0">
         <Card className="flex flex-col min-h-0 flex-2">
           <CardContent className="flex-1 overflow-auto p-4 space-y-4">
             {messages.length === 0 && (
@@ -151,19 +151,18 @@ export default function ChatPage() {
             </Button>
           </form>
         </Card>
-        {toolCallsCache.length > 0 && (
-          <Card className="overflow-hidden flex-1">
-            <CardContent className="p-2">
-              <p className="text-xs text-muted-foreground mb-2 px-1">
-                Tool calls (실행 순서)
-              </p>
-              <ToolCallFlow
-                toolCalls={toolCallsCache}
-                className="w-full rounded-md"
-              />
-            </CardContent>
-          </Card>
-        )}
+
+        <Card className="overflow-hidden flex-1 h-full">
+          <CardContent className="p-2 h-full flex flex-col">
+            <p className="text-xs text-muted-foreground mb-2 px-1">
+              Tool calls
+            </p>
+            <ToolCallFlow
+              toolCalls={toolCallsCache}
+              className="w-full rounded-md flex flex-1"
+            />
+          </CardContent>
+        </Card>
       </div>
     </main>
   );

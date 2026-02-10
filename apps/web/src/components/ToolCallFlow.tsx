@@ -101,7 +101,7 @@ interface ToolCallFlowProps {
 export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlow(toolCalls),
-    [toolCalls],
+    [toolCalls]
   );
 
   const onInit = useCallback((_: unknown) => {
@@ -111,7 +111,9 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
   if (toolCalls.length === 0) {
     return (
       <div
-        className={`rounded-lg border border-dashed border-violet-500/30 bg-violet-950/20 flex items-center justify-center text-violet-400/70 text-sm ${className ?? ""}`}
+        className={`rounded-lg border border-dashed border-violet-500/30 bg-violet-950/20 flex items-center justify-center text-violet-400/70 text-sm ${
+          className ?? ""
+        }`}
       >
         툴 호출이 없습니다.
       </div>
@@ -119,12 +121,7 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
   }
 
   return (
-    <div
-      className={className}
-      style={{
-        height: Math.max(220, toolCalls.length * (NODE_HEIGHT + GAP) + 80),
-      }}
-    >
+    <div className={className}>
       <ReactFlow
         nodes={initialNodes}
         edges={initialEdges}
