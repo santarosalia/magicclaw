@@ -83,7 +83,7 @@ function startProdServers() {
   });
 
   // Next Web (web-next/.next, node_modules/next → next start -p 3000)
-  const nodeModulesDir = path.join(resourcesBase, "node_modules");
+  const nodeModulesDir = path.join(resourcesBase, "web-next", "node_modules");
   const nextBin = path.join(nodeModulesDir, "next", "dist", "bin", "next");
   const webNextDir = path.join(resourcesBase, "web-next");
 
@@ -127,4 +127,3 @@ app.on("activate", () => {
     void createWindow();
   }
 });
-

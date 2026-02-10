@@ -42,7 +42,15 @@
       },
       {
         "from": "../web/node_modules",
-        "to": "node_modules"
+        "to": "web-next/node_modules"
+      },
+      {
+        "from": "../web/package.json",
+        "to": "web-next/package.json"
+      },
+      {
+        "from": "../web/next.config.ts",
+        "to": "web-next/next.config.ts"
       }
     ],
     "mac": {
