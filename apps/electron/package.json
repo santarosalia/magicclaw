@@ -37,7 +37,7 @@
         "to": "api-dist/node_modules"
       },
       {
-        "from": "../web/.next/standalone",
+        "from": "../web/.next/standalone/magicclaw/apps/web",
         "to": "web-next"
       },
       {
