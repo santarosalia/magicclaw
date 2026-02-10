@@ -1,9 +1,12 @@
-import type { Metadata } from 'next';
-import './globals.css';
+import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: 'MagicClaw',
-  description: 'AI agent with MCP tool management',
+  title: "MagicClaw",
+  description: "AI agent with MCP tool management",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
