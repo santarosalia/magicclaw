@@ -6,12 +6,32 @@
   "scripts": {
     "dev": "tsc -p tsconfig.json && electron .",
     "build": "tsc -p tsconfig.json",
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "pnpm run build && electron-builder"
   },
   "devDependencies": {
     "@types/electron": "^1.6.10",
     "@types/node": "^22.0.0",
     "electron": "^32.1.2",
+    "electron-builder": "^26.7.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "ai.magicclaw.app",
+    "productName": "MagicClaw",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
   }
 }

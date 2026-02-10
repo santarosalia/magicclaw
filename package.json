@@ -12,6 +12,7 @@
     "dev:web": "pnpm --filter web dev",
     "dev:electron": "pnpm --filter electron dev",
     "start:electron": "NODE_ENV=production pnpm --filter electron start",
+    "dist:electron": "NODE_ENV=production pnpm --filter electron dist",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test"
   },
