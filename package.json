@@ -9,6 +9,9 @@
     "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
+    "dev:desktop": "pnpm --filter desktop dev:all",
+    "dev:desktop:only": "pnpm --filter desktop dev",
+    "build:desktop": "pnpm --filter desktop dist",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test"
   },

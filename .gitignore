@@ -9,3 +9,4 @@ dist
 .vscode
 coverage
 .turbo
+release
