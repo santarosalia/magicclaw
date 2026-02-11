@@ -50,8 +50,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "runAfterFinish": true,
-      "installerDirectory": "%LOCALAPPDATA%\\Programs\\MagicClaw"
+      "runAfterFinish": true
     }
   }
 }
