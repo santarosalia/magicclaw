@@ -37,16 +37,8 @@
         "to": "api-dist/node_modules"
       },
       {
-        "from": "../web/.next/standalone",
+        "from": "../web/out",
         "to": "web-next"
-      },
-      {
-        "from": "../web/.next/static",
-        "to": "web-next/magicclaw/apps/web/.next/static"
-      },
-      {
-        "from": "../web/public",
-        "to": "web-next/magicclaw/apps/web/public"
       }
     ],
     "mac": {
