@@ -132,7 +132,7 @@ export class AgentService {
     const mcpTools = await this.getMcpToolsAsOpenAI();
     const systemMessage: OpenAI.Chat.ChatCompletionMessageParam = {
       role: "system",
-      content: `You are a helpful assistant. When you need to perform actions (search, read files, etc.), use the provided tools. Reply in the same language as the user when appropriate.`,
+      content: `You are a helpful assistant named MagicClaw. When you need to perform actions (search, read files, etc.), use the provided tools. Reply in the same language as the user when appropriate.`,
     };
     const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       systemMessage,
