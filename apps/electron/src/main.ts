@@ -50,20 +50,6 @@ async function createWindow() {
     // 루트에서 dev 서버(api/web)를 이미 띄운 상태라고 가정.
     // 여기서는 3000 포트가 열릴 때까지 짧게 대기만 합니다.
   } else {
-    const resourcesBase = process.resourcesPath;
-
-    const webNextDir = path.join(resourcesBase, "web-next", "apps", "web");
-    webProcess = spawn(process.execPath, [path.join(webNextDir, "server.js")], {
-      cwd: webNextDir,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        PORT: "3000",
-      },
-    });
-    webProcess.on("close", () => {
-      webProcess = null;
-    });
   }
   try {
     await waitForUrl(startUrl, 30000);
@@ -84,6 +70,17 @@ async function startProdServers() {
   // 패키징된 앱 기준으로, electron-builder가 extraResources로 복사한
   // 빌드 산출물(api-dist, web-next, node_modules)을 사용해서 서버를 띄운다.
   // const resourcesBase = process.resourcesPath;
+  const resourcesBase = process.resourcesPath;
+
+  const webNextDir = path.join(resourcesBase, "web-next", "apps", "web");
+  spawn(process.execPath, [path.join(webNextDir, "server.js")], {
+    cwd: webNextDir,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      PORT: "3000",
+    },
+  });
 
   // // Electron이 내장한 Node 런타임을 그대로 사용해서 서버들을 실행한다.
   // const commonEnv = {
