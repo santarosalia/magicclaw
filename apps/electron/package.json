@@ -9,6 +9,9 @@
     "start": "electron .",
     "dist": "pnpm run build && electron-builder"
   },
+  "dependencies": {
+    "api": "workspace:*"
+  },
   "devDependencies": {
     "@types/electron": "^1.6.10",
     "@types/node": "^22.0.0",

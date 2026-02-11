@@ -49,6 +49,10 @@ importers:
         version: 5.9.3
 
   apps/electron:
+    dependencies:
+      api:
+        specifier: workspace:*
+        version: link:../api
     devDependencies:
       '@types/electron':
         specifier: ^1.6.10
