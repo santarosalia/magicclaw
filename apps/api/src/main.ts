@@ -10,8 +10,9 @@ export async function bootstrap() {
 
   return app;
 }
-
-bootstrap().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  bootstrap().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
