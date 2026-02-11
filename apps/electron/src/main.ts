@@ -53,16 +53,16 @@ async function createWindow() {
       await waitForUrl(startUrl, 30000);
     } catch {
       // 포트 대기에 실패해도 일단 시도
+    } finally {
+      await mainWindow.loadURL(startUrl);
     }
   } else {
     const resourcesBase = process.resourcesPath;
 
     const webNextDir = path.join(resourcesBase, "web-next");
 
-    mainWindow.loadFile(path.join(webNextDir, "index.html"));
+    await mainWindow.loadFile(path.join(webNextDir, "index.html"));
   }
-
-  await mainWindow.loadURL(startUrl);
 
   mainWindow.on("closed", () => {
     mainWindow = null;
