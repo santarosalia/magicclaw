@@ -73,15 +73,18 @@ async function startProdServers() {
   const resourcesBase = process.resourcesPath;
 
   const webNextDir = path.join(resourcesBase, "web-next", "apps", "web");
-  spawn(process.execPath, [path.join(webNextDir, "server.js")], {
+  webProcess = spawn(process.execPath, [path.join(webNextDir, "server.js")], {
     cwd: webNextDir,
     stdio: "inherit",
     env: {
       ...process.env,
       PORT: "3000",
+      ELECTRON_RUN_AS_NODE: "1",
     },
   });
-
+  webProcess.on("close", () => {
+    webProcess = null;
+  });
   // // Electron이 내장한 Node 런타임을 그대로 사용해서 서버들을 실행한다.
   // const commonEnv = {
   //   ...process.env,
