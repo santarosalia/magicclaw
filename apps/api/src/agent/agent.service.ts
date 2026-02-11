@@ -19,6 +19,24 @@ export interface AgentChatOptions {
   maxToolRounds?: number;
 }
 
+export type AgentEvent =
+  | {
+      type: "tool_call";
+      name: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: "tool_result";
+      name: string;
+      output: string;
+    }
+  | {
+      type: "final_message";
+      message: string;
+      toolCallsUsed: number;
+      toolCalls: ToolCallEntry[];
+    };
+
 export interface ToolCallEntry {
   name: string;
   args: Record<string, unknown>;
@@ -122,7 +140,10 @@ export class AgentService {
     return texts.join("\n");
   }
 
-  async chat(options: AgentChatOptions): Promise<AgentChatResult> {
+  async chat(
+    options: AgentChatOptions,
+    onEvent?: (event: AgentEvent) => void
+  ): Promise<AgentChatResult> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
     const { messages, model = defaultModel, maxToolRounds = 2000 } = options;
@@ -184,7 +205,23 @@ export class AgentService {
             : Array.isArray(raw)
             ? JSON.stringify(raw)
             : "";
-        return { message: content, toolCallsUsed, toolCalls: toolCallsLog };
+
+        const result: AgentChatResult = {
+          message: content,
+          toolCallsUsed,
+          toolCalls: toolCallsLog,
+        };
+
+        if (onEvent) {
+          onEvent({
+            type: "final_message",
+            message: result.message,
+            toolCallsUsed: result.toolCallsUsed,
+            toolCalls: result.toolCalls,
+          });
+        }
+
+        return result;
       }
 
       for (const tc of toolCalls) {
@@ -196,7 +233,25 @@ export class AgentService {
           // ignore
         }
         toolCallsLog.push({ name, args });
+
+        if (onEvent && name) {
+          onEvent({
+            type: "tool_call",
+            name,
+            args,
+          });
+        }
+
         const result = await this.executeToolCall(name, args);
+
+        if (onEvent && name) {
+          onEvent({
+            type: "tool_result",
+            name,
+            output: result,
+          });
+        }
+
         toolCallsUsed++;
         openaiMessages.push({
           role: "tool",

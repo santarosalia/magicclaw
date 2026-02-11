@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import { ToolCallFlow, type ToolCallEntry } from "@/components/ToolCallFlow";
+import { useAgentSocket } from "@/lib/useAgentSocket";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -21,6 +22,44 @@ export default function ChatPage() {
   /** 채팅 중 발생한 tool call 목록 (이름 + args) 캐시 → React Flow로 렌더 */
   const [toolCallsCache, setToolCallsCache] = useState<ToolCallEntry[]>([]);
 
+  const { connecting, connected, events, sendChat } = useAgentSocket();
+
+  const lastEventIndexRef = useRef(0);
+
+  // socket 이벤트를 기반으로 toolCalls 및 최종 메시지를 반영
+  useEffect(() => {
+    if (!events.length) return;
+
+    const startIndex = lastEventIndexRef.current;
+    if (startIndex >= events.length) return;
+
+    const newEvents = events.slice(startIndex);
+    lastEventIndexRef.current = events.length;
+
+    const newToolCalls: ToolCallEntry[] = [];
+    let finalMessage: string | null = null;
+
+    for (const ev of newEvents) {
+      if (ev.type === "tool_call") {
+        newToolCalls.push({ name: ev.name, args: ev.args });
+      } else if (ev.type === "final_message") {
+        finalMessage = ev.message;
+      }
+    }
+
+    if (newToolCalls.length) {
+      setToolCallsCache((prev) => [...prev, ...newToolCalls]);
+    }
+
+    if (finalMessage != null) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: finalMessage },
+      ]);
+      setLoading(false);
+    }
+  }, [events, setMessages, setToolCallsCache]);
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
@@ -28,32 +67,9 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setLoading(true);
     try {
-      const res = await fetch("/api/agent/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [...messages, { role: "user", content: text }].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as {
-        message: string;
-        toolCallsUsed?: number;
-        toolCalls?: ToolCallEntry[];
-      };
-      if (data.toolCalls?.length) {
-        setToolCallsCache((prev) => [...prev, ...data.toolCalls!]);
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.message,
-        },
-      ]);
+      // 소켓을 통해 스트리밍 채팅 요청
+      const nextMessages = [...messages, { role: "user", content: text }];
+      sendChat(nextMessages);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -63,10 +79,9 @@ export default function ChatPage() {
             "오류: " + (err instanceof Error ? err.message : String(err)),
         },
       ]);
-    } finally {
       setLoading(false);
     }
-  }, [input, loading, messages]);
+  }, [input, loading, messages, sendChat]);
 
   return (
     <main className="h-screen flex flex-col p-6">
@@ -123,8 +138,14 @@ export default function ChatPage() {
                 )}
               </div>
             ))}
-            {loading && (
-              <p className="text-muted-foreground text-sm">응답 중...</p>
+            {(loading || connecting) && (
+              <p className="text-muted-foreground text-sm">
+                {connecting
+                  ? "서버에 연결 중..."
+                  : connected
+                  ? "응답 중..."
+                  : "연결이 끊어졌습니다."}
+              </p>
             )}
           </CardContent>
           <form
