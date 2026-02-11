@@ -32,14 +32,6 @@
     ],
     "extraResources": [
       {
-        "from": "../api/dist",
-        "to": "api-dist"
-      },
-      {
-        "from": "../api/node_modules",
-        "to": "api-dist/node_modules"
-      },
-      {
         "from": "../web/out",
         "to": "web-next"
       }
