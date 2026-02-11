@@ -37,11 +37,14 @@ export default function ChatPage() {
     lastEventIndexRef.current = events.length;
 
     const newToolCalls: ToolCallEntry[] = [];
+    const assistantMessages: string[] = [];
     let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
       if (ev.type === "tool_call") {
         newToolCalls.push({ name: ev.name, args: ev.args });
+      } else if (ev.type === "assistant_message") {
+        assistantMessages.push(ev.content);
       } else if (ev.type === "final_message") {
         finalMessage = ev.message;
       }
@@ -51,6 +54,16 @@ export default function ChatPage() {
       setToolCallsCache((prev) => [...prev, ...newToolCalls]);
     }
 
+    if (assistantMessages.length) {
+      setMessages((prev) => [
+        ...prev,
+        ...assistantMessages.map((content) => ({
+          role: "assistant" as const,
+          content,
+        })),
+      ]);
+    }
+
     if (finalMessage != null) {
       setMessages((prev) => [
         ...prev,
@@ -58,7 +71,7 @@ export default function ChatPage() {
       ]);
       setLoading(false);
     }
-  }, [events, setMessages, setToolCallsCache]);
+  }, [events]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -66,6 +79,7 @@ export default function ChatPage() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setLoading(true);
+    lastEventIndexRef.current = 0;
     try {
       // 소켓을 통해 스트리밍 채팅 요청
       const nextMessages = [...messages, { role: "user", content: text }];

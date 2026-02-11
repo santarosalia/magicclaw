@@ -15,6 +15,10 @@ type AgentSocketEvent =
       output: string;
     }
   | {
+      type: "assistant_message";
+      content: string;
+    }
+  | {
       type: "final_message";
       message: string;
       toolCallsUsed: number;
