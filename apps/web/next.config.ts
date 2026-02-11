@@ -1,11 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "export",
-  images: {
-    unoptimized: true,
-  },
-  assetPrefix: ".",
+  output: "standalone",
   async rewrites() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
     return [{ source: "/api/:path*", destination: `${apiUrl}/:path*` }];

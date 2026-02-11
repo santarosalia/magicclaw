@@ -49,19 +49,28 @@ async function createWindow() {
   if (isDev) {
     // 루트에서 dev 서버(api/web)를 이미 띄운 상태라고 가정.
     // 여기서는 3000 포트가 열릴 때까지 짧게 대기만 합니다.
-    try {
-      await waitForUrl(startUrl, 30000);
-    } catch {
-      // 포트 대기에 실패해도 일단 시도
-    } finally {
-      await mainWindow.loadURL(startUrl);
-    }
   } else {
     const resourcesBase = process.resourcesPath;
 
-    const webNextDir = path.join(resourcesBase, "web-next");
-
-    await mainWindow.loadFile(path.join(webNextDir, "index.html"));
+    const webNextDir = path.join(resourcesBase, "web-next", "apps", "web");
+    webProcess = spawn(process.execPath, [path.join(webNextDir, "server.js")], {
+      cwd: webNextDir,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PORT: "3000",
+      },
+    });
+    webProcess.on("close", () => {
+      webProcess = null;
+    });
+  }
+  try {
+    await waitForUrl(startUrl, 30000);
+  } catch {
+    // 포트 대기에 실패해도 일단 시도
+  } finally {
+    await mainWindow.loadURL(startUrl);
   }
 
   mainWindow.on("closed", () => {

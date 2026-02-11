@@ -1,5 +1,5 @@
 {
-  "name": "electron",
+  "name": "magicclaw-desktop",
   "version": "0.1.0",
   "private": true,
   "main": "dist/main.js",
@@ -32,8 +32,16 @@
     ],
     "extraResources": [
       {
-        "from": "../web/out",
+        "from": "../web/.next/standalone",
         "to": "web-next"
+      },
+      {
+        "from": "../web/.next/static",
+        "to": "web-next/apps/web/.next/static"
+      },
+      {
+        "from": "../web/public",
+        "to": "web-next/apps/web/public"
       }
     ],
     "mac": {
