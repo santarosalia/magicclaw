@@ -3,8 +3,6 @@ import http from "node:http";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
-import { bootstrap } from "api";
-
 const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
@@ -66,6 +64,8 @@ async function createWindow() {
 
 async function startProdServers() {
   if (isDev) return;
+  const { bootstrap } = await import("api");
+
   await bootstrap();
   // 패키징된 앱 기준으로, electron-builder가 extraResources로 복사한
   // 빌드 산출물(api-dist, web-next, node_modules)을 사용해서 서버를 띄운다.
