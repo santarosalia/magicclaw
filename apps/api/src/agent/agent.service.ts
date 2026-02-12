@@ -212,7 +212,9 @@ Reply in the same language as the user when appropriate.`,
         if (lastUserMessage) {
           const serverListText =
             mcpServerList.length > 0
-              ? `\n\nAvailable MCP servers (use exact name in "server" when relevant):\n${mcpServerList.map((n) => `- ${n}`).join("\n")}`
+              ? `\n\nAvailable MCP servers (use exact name in "server" when relevant):\n${mcpServerList
+                  .map((n) => `- ${n}`)
+                  .join("\n")}`
               : "";
 
           const planningMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -235,14 +237,15 @@ If needPlan is false, return an empty array for steps.`,
             },
           ];
 
-          const planningCompletion =
-            await openaiClient.chat.completions.create({
+          const planningCompletion = await openaiClient.chat.completions.create(
+            {
               model,
               messages: planningMessages,
               tools: undefined,
               tool_choice: "none",
               max_tokens: 400,
-            });
+            }
+          );
 
           const planningChoice = planningCompletion.choices[0];
           const planningMsg = planningChoice?.message;
@@ -283,7 +286,8 @@ If needPlan is false, return an empty array for steps.`,
                       s &&
                       typeof s === "object" &&
                       "description" in s &&
-                      typeof (s as { description: unknown }).description === "string"
+                      typeof (s as { description: unknown }).description ===
+                        "string"
                     ) {
                       const d = (s as { description: string; server?: string })
                         .description;
@@ -292,7 +296,8 @@ If needPlan is false, return an empty array for steps.`,
                         return {
                           description: d.trim(),
                           server:
-                            typeof server === "string" && server.trim().length > 0
+                            typeof server === "string" &&
+                            server.trim().length > 0
                               ? server.trim()
                               : undefined,
                         };
@@ -310,7 +315,9 @@ If needPlan is false, return an empty array for steps.`,
               const numberedPlan = steps
                 .map(
                   (s, idx) =>
-                    `${idx + 1}. ${s.description}${s.server ? ` (서버: ${s.server})` : ""}`
+                    `${idx + 1}. ${s.description}${
+                      s.server ? ` (서버: ${s.server})` : ""
+                    }`
                 )
                 .join("\n");
 
@@ -343,7 +350,11 @@ If needPlan is false, return an empty array for steps.`,
       allSteps: PlanStepInfo[],
       finalizeOnCompletion: boolean,
       previousStepResult?: string
-    ): Promise<{ completed: boolean; result?: AgentChatResult; lastContent: string }> => {
+    ): Promise<{
+      completed: boolean;
+      result?: AgentChatResult;
+      lastContent: string;
+    }> => {
       let lastContent = "";
 
       // 2단계부터: 이전 단계 결과를 명시적으로 넣어서 이번 단계에서 활용하도록 함
@@ -362,7 +373,9 @@ If needPlan is false, return an empty array for steps.`,
                 .slice(stepIndex + 1)
                 .map(
                   (s, j) =>
-                    `${j + 1}. ${s.description}${s.server ? ` (서버: ${s.server})` : ""}`
+                    `${j + 1}. ${s.description}${
+                      s.server ? ` (서버: ${s.server})` : ""
+                    }`
                 )
                 .join("\n")
             : "(없음)";
@@ -418,7 +431,11 @@ ${nextStepsList}
               toolCalls: fallback.toolCalls,
             });
           }
-          return { completed: true, result: fallback, lastContent: fallback.message };
+          return {
+            completed: true,
+            result: fallback,
+            lastContent: fallback.message,
+          };
         }
 
         const msg = choice.message;
@@ -439,7 +456,9 @@ ${nextStepsList}
               ? rawContent
               : Array.isArray(rawContent)
               ? rawContent
-                  .filter((c) => c.type === "text" && typeof c.text === "string")
+                  .filter(
+                    (c) => c.type === "text" && typeof c.text === "string"
+                  )
                   .map((c) => c.text)
                   .join("")
               : "";
@@ -504,7 +523,8 @@ ${nextStepsList}
           const name = tc.function?.name ?? "";
           let args: Record<string, unknown> = {};
           try {
-            if (tc.function?.arguments) args = JSON.parse(tc.function.arguments);
+            if (tc.function?.arguments)
+              args = JSON.parse(tc.function.arguments);
           } catch {
             // ignore
           }
@@ -553,7 +573,11 @@ ${nextStepsList}
           toolCalls: fallback.toolCalls,
         });
       }
-      return { completed: true, result: finalizeOnCompletion ? fallback : undefined, lastContent: fallback.message };
+      return {
+        completed: true,
+        result: finalizeOnCompletion ? fallback : undefined,
+        lastContent: fallback.message,
+      };
     };
 
     // 계획이 수립된 경우: 각 플랜 스텝마다 runStep을 한 번씩 실행
