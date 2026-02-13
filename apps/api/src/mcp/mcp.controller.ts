@@ -24,6 +24,33 @@ export class McpController {
     return this.store.findAll();
   }
 
+  /** 등록된 모든 MCP 서버의 연결 상태 조회 (툴 목록 조회로 연결 검사) */
+  @Get('servers/status')
+  async listServersStatus(): Promise<
+    { id: string; name: string; status: 'ok' | 'error'; error?: string }[]
+  > {
+    const servers = this.store.findAll();
+    const results = await Promise.all(
+      servers.map(async (config) => {
+        const result = await listToolsFromMcpServer(config);
+        if (result.error) {
+          return {
+            id: config.id,
+            name: config.name,
+            status: 'error' as const,
+            error: result.error,
+          };
+        }
+        return {
+          id: config.id,
+          name: config.name,
+          status: 'ok' as const,
+        };
+      }),
+    );
+    return results;
+  }
+
   @Get('servers/:id')
   getServer(@Param('id') id: string): McpServerConfig | undefined {
     return this.store.findOne(id);

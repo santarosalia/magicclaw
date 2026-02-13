@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { useLlmStatus } from '@/lib/llm-status-context';
 
 type LlmConfig = {
   id: string;
@@ -19,6 +20,7 @@ type LlmConfig = {
 };
 
 export default function LlmPage() {
+  const { refreshLlmStatus } = useLlmStatus();
   const [configs, setConfigs] = useState<LlmConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
@@ -64,6 +66,7 @@ export default function LlmPage() {
         apiKey: '',
       });
       await fetchConfigs();
+      refreshLlmStatus();
     } finally {
       setSaving(false);
     }
@@ -77,17 +80,21 @@ export default function LlmPage() {
     });
     await fetchConfigs();
     setEditingId(null);
+    refreshLlmStatus();
   };
 
   const setDefault = async (id: string) => {
-    await fetch(`/api/llm/configs/${id}/default`, { method: 'POST' });
+    const res = await fetch(`/api/llm/configs/${id}/default`, { method: 'POST' });
+    if (!res.ok) return;
     await fetchConfigs();
+    refreshLlmStatus();
   };
 
   const removeConfig = async (id: string) => {
     if (!confirm('이 LLM 설정을 삭제할까요?')) return;
     await fetch(`/api/llm/configs/${id}`, { method: 'DELETE' });
     await fetchConfigs();
+    refreshLlmStatus();
   };
 
   return (

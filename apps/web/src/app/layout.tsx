@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AgentSocketProvider } from "@/lib/agent-socket-context";
+import { LlmStatusProvider } from "@/lib/llm-status-context";
+import { GlobalConnectionStatus } from "@/components/GlobalConnectionStatus";
 
 export const metadata: Metadata = {
   title: "MagicClaw",
@@ -20,7 +23,14 @@ export default function RootLayout({
           href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
         />
       </head>
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+      <body className="min-h-screen font-sans antialiased">
+        <AgentSocketProvider>
+          <LlmStatusProvider>
+            <GlobalConnectionStatus />
+            {children}
+          </LlmStatusProvider>
+        </AgentSocketProvider>
+      </body>
     </html>
   );
 }
