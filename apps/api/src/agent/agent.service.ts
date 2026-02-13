@@ -46,10 +46,13 @@ export interface ToolCallEntry {
   args: Record<string, unknown>;
 }
 
-/** 계획 단계: 설명 + (선택) 사용할 MCP 서버 이름 */
+/** 계획 단계: 설명 + (선택) 사용할 MCP 서버 이름들 — 여러 개면 해당 서버 도구를 모두 사용 가능 */
 export interface PlanStepInfo {
   description: string;
+  /** 단일 서버 (플래너가 server 하나만 줄 때) */
   server?: string;
+  /** 복수 서버 (권장). 예: 검색 단계 [ddg, browser], 파일 저장 단계 [excel, filesystem] */
+  servers?: string[];
 }
 
 export interface AgentChatResult {
@@ -121,7 +124,7 @@ export class AgentService {
     return tools;
   }
 
-  /** 서버 이름에 해당하는 MCP 서버의 도구만 반환 (계획 단계별 도구 제한용). */
+  /** 서버 이름 하나의 MCP 도구만 반환. */
   private async getMcpToolsForServer(
     serverName: string
   ): Promise<OpenAI.Chat.Completions.ChatCompletionTool[]> {
@@ -132,6 +135,26 @@ export class AgentService {
     if (!server) return [];
     const result = await listToolsFromMcpServer(server);
     return result.tools.map((t) => mcpToolToOpenAI(t));
+  }
+
+  /** 여러 MCP 서버의 도구를 합쳐서 반환 (이름 기준 중복 제거). 단계에서 여러 서버 사용 시. */
+  private async getMcpToolsForServers(
+    serverNames: string[]
+  ): Promise<OpenAI.Chat.Completions.ChatCompletionTool[]> {
+    const seen = new Set<string>();
+    const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [];
+    for (const name of serverNames) {
+      if (!name?.trim()) continue;
+      const list = await this.getMcpToolsForServer(name.trim());
+      for (const t of list) {
+        const fn = t.function?.name ?? "";
+        if (fn && !seen.has(fn)) {
+          seen.add(fn);
+          tools.push(t);
+        }
+      }
+    }
+    return tools;
   }
 
   /** Resolve which MCP server has this tool (by re-listing; can be optimized with cache). */
@@ -224,11 +247,13 @@ Reply in the same language as the user when appropriate.`,
 Given the latest user request, decide if step-by-step planning is helpful.${serverListText}
 
 Respond ONLY with strict JSON, no explanations:
-{"needPlan": boolean, "steps": Array<{description: string, server?: string}>}
+{"needPlan": boolean, "steps": Array<{description: string, servers?: string[]}>}
 
 - "needPlan": true if the task involves multiple steps, tool usage, browsing, or non-trivial procedures.
 - "needPlan": false for simple Q&A or very short answers that don't need tools.
-- "steps": when needPlan is true, list each step as an object with "description" (short step in user's language) and optionally "server" (exact MCP server name from the list above for that step). If a step does not need a specific server, omit "server".
+- "steps": when needPlan is true, list each step as an object with "description" (short step in user's language) and optionally "servers" (array of exact MCP server names from the list above).
+  - You MAY assign multiple servers per step when useful: e.g. search step ["ddg","browser"] so the agent can try another if one gives poor results; file/save step ["excel","filesystem"] so the agent can use workspace path from filesystem when saving.
+  - Use "servers" (array), not "server". If a step needs only one server, use a one-element array.
 If needPlan is false, return an empty array for steps.`,
             },
             {
@@ -289,17 +314,30 @@ If needPlan is false, return an empty array for steps.`,
                       typeof (s as { description: unknown }).description ===
                         "string"
                     ) {
-                      const d = (s as { description: string; server?: string })
-                        .description;
-                      const server = (s as { server?: string }).server;
+                      const d = (s as { description: string }).description;
+                      const raw = s as {
+                        server?: string;
+                        servers?: unknown;
+                      };
+                      let servers: string[] | undefined;
+                      if (Array.isArray(raw.servers)) {
+                        servers = raw.servers
+                          .filter(
+                            (x): x is string =>
+                              typeof x === "string" && x.trim().length > 0
+                          )
+                          .map((x) => x.trim());
+                        if (servers.length === 0) servers = undefined;
+                      } else if (
+                        typeof raw.server === "string" &&
+                        raw.server.trim().length > 0
+                      ) {
+                        servers = [raw.server.trim()];
+                      }
                       if (d.trim().length > 0)
                         return {
                           description: d.trim(),
-                          server:
-                            typeof server === "string" &&
-                            server.trim().length > 0
-                              ? server.trim()
-                              : undefined,
+                          ...(servers?.length ? { servers } : {}),
                         };
                     }
                     return null;
@@ -312,11 +350,15 @@ If needPlan is false, return an empty array for steps.`,
 
             if (needPlan && steps.length > 0) {
               executionSteps = steps;
+              const stepServers = (s: PlanStepInfo) =>
+                s.servers?.length ? s.servers : s.server ? [s.server] : [];
               const numberedPlan = steps
                 .map(
                   (s, idx) =>
                     `${idx + 1}. ${s.description}${
-                      s.server ? ` (서버: ${s.server})` : ""
+                      stepServers(s).length
+                        ? ` (서버: ${stepServers(s).join(", ")})`
+                        : ""
                     }`
                 )
                 .join("\n");
@@ -366,6 +408,9 @@ If needPlan is false, return an empty array for steps.`,
       }
 
       // 단계별 실행 시: "현재 단계 하나만" 수행하도록 엄격한 지시를 LLM 컨텍스트에 추가
+      const stepServers = (s: PlanStepInfo) =>
+        s.servers?.length ? s.servers : s.server ? [s.server] : [];
+
       if (stepInfo && allSteps.length > 0) {
         const nextStepsList =
           stepIndex + 1 < allSteps.length
@@ -374,22 +419,35 @@ If needPlan is false, return an empty array for steps.`,
                 .map(
                   (s, j) =>
                     `${j + 1}. ${s.description}${
-                      s.server ? ` (서버: ${s.server})` : ""
+                      stepServers(s).length
+                        ? ` (서버: ${stepServers(s).join(", ")})`
+                        : ""
                     }`
                 )
                 .join("\n")
             : "(없음)";
 
-        const serverHint = stepInfo.server
-          ? `\n- **이 단계에서 사용할 MCP 서버:** ${stepInfo.server} — 이 단계는 반드시 "${stepInfo.server}" 서버의 도구를 호출해서 완료해야 합니다. "차후에 진행하겠다"고만 하지 말고, 지금 해당 도구를 호출하세요.`
-          : "";
+        const preferredServerNames = stepServers(stepInfo);
+        const serverHint =
+          preferredServerNames.length > 0
+            ? `\n- **이 단계에서 사용할 MCP 서버:** ${preferredServerNames.join(
+                ", "
+              )} — 이 단계는 반드시 위 서버(들)의 도구를 호출해서 완료해야 합니다. 결과가 부족하면 다른 지정 서버의 도구를 추가로 사용하세요. "차후에 진행하겠다"고만 하지 말고, 지금 도구를 호출하세요.`
+            : "";
+
+        const workspacePath = process.env.MAGICCLAW_WORKSPACE?.trim();
+        const workspaceHint =
+          workspacePath &&
+          preferredServerNames.some((n) => /filesystem|excel|file/i.test(n))
+            ? `\n- **파일 저장 경로:** 다음 워크스페이스 경로를 사용하세요: ${workspacePath} (임시 폴더 /tmp 대신 이 경로에 저장하세요.)`
+            : "";
 
         openaiMessages.push({
           role: "assistant",
           content: `[단계별 실행 규칙 - 반드시 지킬 것]
 지금은 **현재 단계 하나만** 수행합니다. 다음 단계의 작업은 이 턴에서 절대 하지 마세요.
 
-- **현재 단계(지금 할 일):** ${stepInfo.description}${serverHint}
+- **현재 단계(지금 할 일):** ${stepInfo.description}${serverHint}${workspaceHint}
 - **다음 단계(아직 하지 말 것):**
 ${nextStepsList}
 
@@ -400,10 +458,15 @@ ${nextStepsList}
         });
       }
 
-      // 서버가 지정된 단계에서는 해당 서버의 도구만 전달 → "차후 진행" 없이 반드시 그 도구를 쓰게 함
+      // 서버가 지정된 단계에서는 해당 서버(들)의 도구만 전달 → 여러 서버면 도구 합쳐서 제공
       let toolsForStep = mcpTools;
-      if (stepInfo?.server) {
-        const serverTools = await this.getMcpToolsForServer(stepInfo.server);
+      const preferredServers = stepInfo?.servers?.length
+        ? stepInfo.servers
+        : stepInfo?.server
+        ? [stepInfo.server]
+        : [];
+      if (preferredServers.length > 0) {
+        const serverTools = await this.getMcpToolsForServers(preferredServers);
         if (serverTools.length > 0) toolsForStep = serverTools;
       }
 
@@ -584,10 +647,14 @@ ${nextStepsList}
     if (executionSteps && executionSteps.length > 0 && onEvent) {
       let lastContent = "";
 
+      const stepServersLabel = (s: PlanStepInfo) =>
+        s.servers?.length ? s.servers.join(", ") : s.server ? s.server : "";
+
       for (let i = 0; i < executionSteps.length; i++) {
         const step = executionSteps[i];
         const stepLabel =
-          step.description + (step.server ? ` (서버: ${step.server})` : "");
+          step.description +
+          (stepServersLabel(step) ? ` (서버: ${stepServersLabel(step)})` : "");
         const isLastStep = i === executionSteps.length - 1;
 
         // 단계 시작 시 즉시 프론트로 "단계 N" 메시지 전송 (단계별로 보이도록)
