@@ -21,6 +21,10 @@ export interface AgentChatOptions {
 
 export type AgentEvent =
   | {
+      type: "plan";
+      content: string;
+    }
+  | {
       type: "tool_call";
       name: string;
       args: Record<string, unknown>;
@@ -364,7 +368,7 @@ If needPlan is false, return an empty array for steps.`,
                 .join("\n");
 
               onEvent({
-                type: "assistant_message",
+                type: "plan",
                 content: numberedPlan,
               });
 
@@ -378,6 +382,13 @@ If needPlan is false, return an empty array for steps.`,
         }
       } catch {
         // 계획 수립 호출이 실패해도 메인 루프는 그대로 진행
+      }
+      // 플랜이 없을 때도 클라이언트에 계획 단계 결과를 알림 (항상 plan 이벤트 전송)
+      if (executionSteps === null || executionSteps.length === 0) {
+        onEvent({
+          type: "plan",
+          content: "단일 단계로 진행합니다.",
+        });
       }
     }
 

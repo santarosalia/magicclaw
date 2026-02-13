@@ -13,6 +13,10 @@ import { io, type Socket } from "socket.io-client";
 
 export type AgentSocketEvent =
   | {
+      type: "plan";
+      content: string;
+    }
+  | {
       type: "tool_call";
       name: string;
       args: Record<string, unknown>;

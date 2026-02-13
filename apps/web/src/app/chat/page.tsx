@@ -41,7 +41,9 @@ export default function ChatPage() {
     let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
-      if (ev.type === "tool_call") {
+      if (ev.type === "plan") {
+        assistantMessages.push(`**계획**\n${ev.content}`);
+      } else if (ev.type === "tool_call") {
         newToolCalls.push({ name: ev.name, args: ev.args });
       } else if (ev.type === "assistant_message") {
         assistantMessages.push(ev.content);
