@@ -148,3 +148,36 @@
 .markdown-content pre code.hljs {
   @apply bg-transparent;
 }
+
+/* 스트리밍 글자 색상 살짝 변화 (밝기 + 투명도) */
+@keyframes streaming-text-color {
+  0%,
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.92;
+    filter: brightness(1.08);
+  }
+}
+
+/* 스트리밍 중 말풍선 테두리(링) 살짝 변화 */
+@keyframes streaming-border {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px hsl(250 84% 68% / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 1px hsl(250 84% 68% / 0.55), 0 0 12px hsl(250 84% 68% / 0.15);
+  }
+}
+
+@layer utilities {
+  .animate-streaming-text {
+    animation: streaming-text-color 2.5s ease-in-out infinite;
+  }
+  .animate-streaming-border {
+    animation: streaming-border 2s ease-in-out infinite;
+  }
+}

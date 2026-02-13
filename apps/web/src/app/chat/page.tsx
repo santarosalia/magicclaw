@@ -21,12 +21,30 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   /** 채팅 중 발생한 tool call 목록 (이름 + args) 캐시 → React Flow로 렌더 */
   const [toolCallsCache, setToolCallsCache] = useState<ToolCallEntry[]>([]);
-
   const { connecting, connected, events, sendChat } = useAgentSocket();
 
   const lastEventIndexRef = useRef(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // socket 이벤트를 기반으로 toolCalls 및 최종 메시지를 반영
+  // 이벤트에서 스트리밍 텍스트 파생 (계획 + assistant_message 누적, final 전까지)
+  const streamingContent =
+    events.some((e) => e.type === "final_message") === false
+      ? (() => {
+          const parts: string[] = [];
+          for (const ev of events) {
+            if (ev.type === "plan") parts.push(`**계획**\n${ev.content}`);
+            if (ev.type === "assistant_message") parts.push(ev.content);
+          }
+          return parts.join("\n\n");
+        })()
+      : "";
+
+  // 스트리밍/새 메시지 시 하단으로 스크롤
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingContent]);
+
+  // socket 이벤트를 기반으로 toolCalls 캐시 및 최종 메시지 반영
   useEffect(() => {
     if (!events.length) return;
 
@@ -37,16 +55,11 @@ export default function ChatPage() {
     lastEventIndexRef.current = events.length;
 
     const newToolCalls: ToolCallEntry[] = [];
-    const assistantMessages: string[] = [];
     let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
-      if (ev.type === "plan") {
-        assistantMessages.push(`**계획**\n${ev.content}`);
-      } else if (ev.type === "tool_call") {
+      if (ev.type === "tool_call") {
         newToolCalls.push({ name: ev.name, args: ev.args });
-      } else if (ev.type === "assistant_message") {
-        assistantMessages.push(ev.content);
       } else if (ev.type === "final_message") {
         finalMessage = ev.message;
       }
@@ -54,16 +67,6 @@ export default function ChatPage() {
 
     if (newToolCalls.length) {
       setToolCallsCache((prev) => [...prev, ...newToolCalls]);
-    }
-
-    if (assistantMessages.length) {
-      setMessages((prev) => [
-        ...prev,
-        ...assistantMessages.map((content) => ({
-          role: "assistant" as const,
-          content,
-        })),
-      ]);
     }
 
     if (finalMessage != null) {
@@ -154,15 +157,45 @@ export default function ChatPage() {
                 )}
               </div>
             ))}
-            {(loading || connecting) && (
-              <p className="text-muted-foreground text-sm">
-                {connecting
-                  ? "서버에 연결 중..."
-                  : connected
-                  ? "응답 중..."
-                  : "연결이 끊어졌습니다."}
-              </p>
-            )}
+            {/* 스트리밍 중: 한 말풍선에서 계획·중간 메시지가 실시간으로 갱신 */}
+            {streamingContent ? (
+              <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2 animate-in fade-in duration-200 animate-streaming-border">
+                <div className="markdown-content prose prose-invert max-w-none animate-streaming-text">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                    components={{
+                      code: ({ node, className, children, ...props }) => {
+                        const match = /language-(\w+)/.exec(className || "");
+                        return match ? (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        ) : (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                    }}
+                  >
+                    {streamingContent}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            ) : null}
+            {(loading || connecting) && !streamingContent ? (
+              <div className="flex items-center gap-2 rounded-lg border border-primary/20 px-3 py-2 text-muted-foreground text-sm animate-streaming-border">
+                <span>
+                  {connecting
+                    ? "서버에 연결 중..."
+                    : connected
+                    ? "응답 중..."
+                    : "연결이 끊어졌습니다."}
+                </span>
+              </div>
+            ) : null}
+            <div ref={messagesEndRef} />
           </CardContent>
           <form
             onSubmit={(e) => {
