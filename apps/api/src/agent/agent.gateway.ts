@@ -26,7 +26,6 @@ export class AgentGateway {
     body: {
       messages?: ChatMessage[];
       model?: string;
-      maxToolRounds?: number;
     },
     @ConnectedSocket() client: Socket
   ) {
@@ -40,7 +39,6 @@ export class AgentGateway {
       {
         messages,
         model: body.model,
-        maxToolRounds: body.maxToolRounds,
       },
       onEvent
     );

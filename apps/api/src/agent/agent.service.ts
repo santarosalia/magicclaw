@@ -7,6 +7,16 @@ import {
 } from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
+import { createDeepAgent } from "deepagents";
+import { ChatOpenAI } from "@langchain/openai";
+import { tool } from "langchain";
+import { z } from "zod";
+import {
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -16,14 +26,9 @@ export interface ChatMessage {
 export interface AgentChatOptions {
   messages: ChatMessage[];
   model?: string;
-  maxToolRounds?: number;
 }
 
 export type AgentEvent =
-  | {
-      type: "plan";
-      content: string;
-    }
   | {
       type: "tool_call";
       name: string;
@@ -50,15 +55,6 @@ export interface ToolCallEntry {
   args: Record<string, unknown>;
 }
 
-/** 계획 단계: 설명 + (선택) 사용할 MCP 서버 이름들 — 여러 개면 해당 서버 도구를 모두 사용 가능 */
-export interface PlanStepInfo {
-  description: string;
-  /** 단일 서버 (플래너가 server 하나만 줄 때) */
-  server?: string;
-  /** 복수 서버 (권장). 예: 검색 단계 [ddg, browser], 파일 저장 단계 [excel, filesystem] */
-  servers?: string[];
-}
-
 export interface AgentChatResult {
   message: string;
   toolCallsUsed: number;
@@ -83,35 +79,11 @@ function mcpToolToOpenAI(t: {
 
 @Injectable()
 export class AgentService {
-  private openai: OpenAI | null = null;
   private toolServerCache = new Map<string, McpServerConfig>();
   constructor(
     private readonly mcpStore: McpStoreService,
-    private readonly llmStore: LlmStoreService
-  ) {
-    const key = process.env.OPENAI_API_KEY;
-    if (key) this.openai = new OpenAI({ apiKey: key });
-  }
-
-  private getOpenAIClient(model?: string): OpenAI {
-    // 로컬 LLM 설정이 있으면 사용
-    const defaultConfig = this.llmStore.findDefault();
-    if (defaultConfig) {
-      return new OpenAI({
-        baseURL: defaultConfig.baseURL,
-        apiKey: defaultConfig.apiKey || "not-needed",
-      });
-    }
-
-    // 환경변수에서 OpenAI 키가 있으면 사용
-    if (this.openai) {
-      return this.openai;
-    }
-
-    throw new Error(
-      "LLM 설정이 없습니다. LLM 관리 페이지에서 설정을 추가해주세요."
-    );
-  }
+    private readonly llmStore: LlmStoreService,
+  ) {}
 
   /** Collect all tools from registered MCP servers and return OpenAI-format tools. */
   async getMcpToolsAsOpenAI(): Promise<
@@ -123,39 +95,6 @@ export class AgentService {
       const result = await listToolsFromMcpServer(server);
       for (const t of result.tools) {
         tools.push(mcpToolToOpenAI(t));
-      }
-    }
-    return tools;
-  }
-
-  /** 서버 이름 하나의 MCP 도구만 반환. */
-  private async getMcpToolsForServer(
-    serverName: string
-  ): Promise<OpenAI.Chat.Completions.ChatCompletionTool[]> {
-    const servers = this.mcpStore.findAll();
-    const server = servers.find(
-      (s) => s.name.trim().toLowerCase() === serverName.trim().toLowerCase()
-    );
-    if (!server) return [];
-    const result = await listToolsFromMcpServer(server);
-    return result.tools.map((t) => mcpToolToOpenAI(t));
-  }
-
-  /** 여러 MCP 서버의 도구를 합쳐서 반환 (이름 기준 중복 제거). 단계에서 여러 서버 사용 시. */
-  private async getMcpToolsForServers(
-    serverNames: string[]
-  ): Promise<OpenAI.Chat.Completions.ChatCompletionTool[]> {
-    const seen = new Set<string>();
-    const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [];
-    for (const name of serverNames) {
-      if (!name?.trim()) continue;
-      const list = await this.getMcpToolsForServer(name.trim());
-      for (const t of list) {
-        const fn = t.function?.name ?? "";
-        if (fn && !seen.has(fn)) {
-          seen.add(fn);
-          tools.push(t);
-        }
       }
     }
     return tools;
@@ -179,7 +118,7 @@ export class AgentService {
   /** Execute one tool call via MCP and return content for the assistant message. */
   private async executeToolCall(
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
   ): Promise<string> {
     const server = await this.findServerForTool(toolName);
     if (!server) return `Error: No MCP server provides tool "${toolName}"`;
@@ -190,538 +129,169 @@ export class AgentService {
     return texts.join("\n");
   }
 
+  /** LLM 설정으로 ChatOpenAI 인스턴스 생성 (deepagents용). */
+  private getLangChainModel(model?: string): ChatOpenAI {
+    const defaultConfig = this.llmStore.findDefault();
+    if (!defaultConfig) {
+      throw new Error(
+        "LLM 설정이 없습니다. LLM 관리 페이지에서 설정을 추가해주세요.",
+      );
+    }
+    const modelId = model ?? defaultConfig.model;
+    return new ChatOpenAI({
+      model: modelId,
+      openAIApiKey: defaultConfig.apiKey || "not-needed",
+      configuration: defaultConfig.baseURL
+        ? { baseURL: defaultConfig.baseURL }
+        : undefined,
+    });
+  }
+
+  /** MCP 도구 목록을 LangChain StructuredTool[] 로 반환 (deepagents용). */
+  private async getMcpToolsAsLangChain(): Promise<ReturnType<typeof tool>[]> {
+    const servers = this.mcpStore.findAll();
+    const tools: ReturnType<typeof tool>[] = [];
+    const seen = new Set<string>();
+    for (const server of servers) {
+      const result = await listToolsFromMcpServer(server);
+      for (const t of result.tools) {
+        if (seen.has(t.name)) continue;
+        seen.add(t.name);
+        const toolName = t.name;
+        tools.push(
+          tool(
+            async (args: Record<string, unknown>) => {
+              return this.executeToolCall(toolName, args ?? {});
+            },
+            {
+              name: t.name,
+              description: t.description ?? "",
+              schema: z.record(z.unknown()),
+            },
+          ),
+        );
+      }
+    }
+    return tools;
+  }
+
   async chat(
     options: AgentChatOptions,
-    onEvent?: (event: AgentEvent) => void
+    onEvent?: (event: AgentEvent) => void,
   ): Promise<AgentChatResult> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
-    const { messages, model = defaultModel, maxToolRounds = 2000 } = options;
+    const { messages, model = defaultModel } = options;
 
-    const openaiClient = this.getOpenAIClient(model);
+    const llm = this.getLangChainModel(model);
+    const mcpTools = await this.getMcpToolsAsLangChain();
 
-    const mcpTools = await this.getMcpToolsAsOpenAI();
-    const systemMessage: OpenAI.Chat.ChatCompletionMessageParam = {
-      role: "system",
-      content: `You are a helpful assistant named MagicClaw.
+    const systemPrompt = `You are a helpful assistant named MagicClaw.
 You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
-Reply in the same language as the user when appropriate.`,
-    };
-    const openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      systemMessage,
-      ...messages.map((m) =>
-        m.role === "system"
-          ? { role: "system" as const, content: m.content }
-          : m.role === "user"
-          ? { role: "user" as const, content: m.content }
-          : { role: "assistant" as const, content: m.content }
-      ),
-    ];
+Reply in the same language as the user when appropriate.`;
 
-    // 계획이 수립된 경우, 각 단계별로 LLM을 태우기 위해 steps를 유지한다.
-    let executionSteps: PlanStepInfo[] | null = null;
+    const agent = createDeepAgent({
+      model: llm,
+      tools: mcpTools,
+      systemPrompt,
+    });
 
-    // 등록된 MCP 서버 목록 (이름만) — 계획 수립 시 단계별로 어떤 서버를 쓸지 고르게 함
-    const mcpServerList = this.mcpStore
-      .findAll()
-      .map((s) => s.name)
-      .filter((n) => n.trim().length > 0);
+    const lcMessages: BaseMessage[] = messages.map((m) => {
+      if (m.role === "system") return new SystemMessage({ content: m.content });
+      if (m.role === "user") return new HumanMessage({ content: m.content });
+      return new AIMessage({ content: m.content });
+    });
 
-    // onEvent 콜백이 있는 경우(예: WebSocket 스트리밍)에는 먼저
-    // "계획 수립이 필요한지"를 판단하고, 필요한 경우에만 numbered plan을 만든다.
-    if (onEvent) {
-      try {
-        const lastUserMessage = [...messages]
-          .reverse()
-          .find((m) => m.role === "user");
-
-        if (lastUserMessage) {
-          const serverListText =
-            mcpServerList.length > 0
-              ? `\n\nAvailable MCP servers (use exact name in "server" when relevant):\n${mcpServerList
-                  .map((n) => `- ${n}`)
-                  .join("\n")}`
-              : "";
-
-          const planningMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-            {
-              role: "system",
-              content: `You are a planner and intent classifier.
-Given the latest user request, decide if step-by-step planning is helpful.${serverListText}
-
-Respond ONLY with strict JSON, no explanations:
-{"needPlan": boolean, "steps": Array<{description: string, servers?: string[]}>}
-
-- "needPlan": true if the task involves multiple steps, tool usage, browsing, or non-trivial procedures.
-- "needPlan": false for simple Q&A or very short answers that don't need tools.
-- "steps": when needPlan is true, list each step as an object with "description" (short step in user's language) and optionally "servers" (array of exact MCP server names from the list above).
-  - You MAY assign multiple servers per step when useful: e.g. search step ["ddg","browser"] so the agent can try another if one gives poor results; file/save step ["excel","filesystem"] so the agent can use workspace path from filesystem when saving.
-  - Use "servers" (array), not "server". If a step needs only one server, use a one-element array.
-If needPlan is false, return an empty array for steps.`,
-            },
-            {
-              role: "user",
-              content: lastUserMessage.content,
-            },
-          ];
-
-          const planningCompletion = await openaiClient.chat.completions.create(
-            {
-              model,
-              messages: planningMessages,
-              tools: undefined,
-              tool_choice: "none",
-              max_tokens: 400,
-            }
-          );
-
-          const planningChoice = planningCompletion.choices[0];
-          const planningMsg = planningChoice?.message;
-          const raw = planningMsg?.content as
-            | string
-            | Array<{ type?: string; text?: string }>
-            | null
-            | undefined;
-
-          const textContent =
-            typeof raw === "string"
-              ? raw
-              : Array.isArray(raw)
-              ? raw
-                  .filter(
-                    (c) =>
-                      c.type === "text" && typeof (c as any).text === "string"
-                  )
-                  .map((c: any) => c.text as string)
-                  .join("")
-              : "";
-
-          if (textContent) {
-            let needPlan = false;
-            let steps: PlanStepInfo[] = [];
-            try {
-              const parsed = JSON.parse(textContent) as {
-                needPlan?: boolean;
-                steps?: unknown;
-              };
-              needPlan = !!parsed.needPlan;
-              if (Array.isArray(parsed.steps)) {
-                steps = parsed.steps
-                  .map((s: unknown): PlanStepInfo | null => {
-                    if (typeof s === "string" && s.trim().length > 0)
-                      return { description: s.trim() };
-                    if (
-                      s &&
-                      typeof s === "object" &&
-                      "description" in s &&
-                      typeof (s as { description: unknown }).description ===
-                        "string"
-                    ) {
-                      const d = (s as { description: string }).description;
-                      const raw = s as {
-                        server?: string;
-                        servers?: unknown;
-                      };
-                      let servers: string[] | undefined;
-                      if (Array.isArray(raw.servers)) {
-                        servers = raw.servers
-                          .filter(
-                            (x): x is string =>
-                              typeof x === "string" && x.trim().length > 0
-                          )
-                          .map((x) => x.trim());
-                        if (servers.length === 0) servers = undefined;
-                      } else if (
-                        typeof raw.server === "string" &&
-                        raw.server.trim().length > 0
-                      ) {
-                        servers = [raw.server.trim()];
-                      }
-                      if (d.trim().length > 0)
-                        return {
-                          description: d.trim(),
-                          ...(servers?.length ? { servers } : {}),
-                        };
-                    }
-                    return null;
-                  })
-                  .filter((s): s is PlanStepInfo => s !== null);
-              }
-            } catch {
-              // JSON 파싱 실패 시에는 보수적으로 계획 수립을 건너뜀
-            }
-
-            if (needPlan && steps.length > 0) {
-              executionSteps = steps;
-              const stepServers = (s: PlanStepInfo) =>
-                s.servers?.length ? s.servers : s.server ? [s.server] : [];
-              const numberedPlan = steps
-                .map(
-                  (s, idx) =>
-                    `${idx + 1}. ${s.description}${
-                      stepServers(s).length
-                        ? ` (서버: ${stepServers(s).join(", ")})`
-                        : ""
-                    }`
-                )
-                .join("\n");
-
-              onEvent({
-                type: "plan",
-                content: numberedPlan,
-              });
-
-              // 이후 실행 단계에서도 이 계획이 컨텍스트에 포함되도록 assistant 메시지로 추가
-              openaiMessages.push({
-                role: "assistant",
-                content: numberedPlan,
-              });
-            }
-          }
-        }
-      } catch {
-        // 계획 수립 호출이 실패해도 메인 루프는 그대로 진행
-      }
-      // 플랜이 없을 때도 클라이언트에 계획 단계 결과를 알림 (항상 plan 이벤트 전송)
-      if (executionSteps === null || executionSteps.length === 0) {
-        onEvent({
-          type: "plan",
-          content: "단일 단계로 진행합니다.",
-        });
-      }
-    }
+    const result = await agent.invoke({
+      messages: lcMessages,
+    });
 
     const toolCallsLog: ToolCallEntry[] = [];
     let toolCallsUsed = 0;
-    let round = 0;
+    let finalMessage = "";
 
-    // 하나의 "실행 단계"를 처리하는 공통 루프
-    const runStep = async (
-      stepInfo: PlanStepInfo | null,
-      stepIndex: number,
-      allSteps: PlanStepInfo[],
-      finalizeOnCompletion: boolean,
-      previousStepResult?: string
-    ): Promise<{
-      completed: boolean;
-      result?: AgentChatResult;
-      lastContent: string;
-    }> => {
-      let lastContent = "";
-
-      // 2단계부터: 이전 단계 결과를 명시적으로 넣어서 이번 단계에서 활용하도록 함
-      if (previousStepResult?.trim()) {
-        openaiMessages.push({
-          role: "user",
-          content: `[이전 단계 결과]\n${previousStepResult.trim()}\n\n위 결과를 활용하여 다음 단계를 수행하세요.`,
-        });
-      }
-
-      // 단계별 실행 시: "현재 단계 하나만" 수행하도록 엄격한 지시를 LLM 컨텍스트에 추가
-      const stepServers = (s: PlanStepInfo) =>
-        s.servers?.length ? s.servers : s.server ? [s.server] : [];
-
-      if (stepInfo && allSteps.length > 0) {
-        const nextStepsList =
-          stepIndex + 1 < allSteps.length
-            ? allSteps
-                .slice(stepIndex + 1)
-                .map(
-                  (s, j) =>
-                    `${j + 1}. ${s.description}${
-                      stepServers(s).length
-                        ? ` (서버: ${stepServers(s).join(", ")})`
-                        : ""
-                    }`
-                )
-                .join("\n")
-            : "(없음)";
-
-        const preferredServerNames = stepServers(stepInfo);
-        const serverHint =
-          preferredServerNames.length > 0
-            ? `\n- **이 단계에서 사용할 MCP 서버:** ${preferredServerNames.join(
-                ", "
-              )} — 이 단계는 반드시 위 서버(들)의 도구를 호출해서 완료해야 합니다. 결과가 부족하면 다른 지정 서버의 도구를 추가로 사용하세요. "차후에 진행하겠다"고만 하지 말고, 지금 도구를 호출하세요.`
-            : "";
-
-        const workspacePath = process.env.MAGICCLAW_WORKSPACE?.trim();
-        const workspaceHint =
-          workspacePath &&
-          preferredServerNames.some((n) => /filesystem|excel|file/i.test(n))
-            ? `\n- **파일 저장 경로:** 다음 워크스페이스 경로를 사용하세요: ${workspacePath} (임시 폴더 /tmp 대신 이 경로에 저장하세요.)`
-            : "";
-
-        openaiMessages.push({
-          role: "assistant",
-          content: `[단계별 실행 규칙 - 반드시 지킬 것]
-지금은 **현재 단계 하나만** 수행합니다. 다음 단계의 작업은 이 턴에서 절대 하지 마세요.
-
-- **현재 단계(지금 할 일):** ${stepInfo.description}${serverHint}${workspaceHint}
-- **다음 단계(아직 하지 말 것):**
-${nextStepsList}
-
-규칙:
-1. 위 "현재 단계"에 해당하는 도구만 호출하세요. (예: 1단계가 "주가 조회"면 검색/조회 도구만, 2단계가 "엑셀 생성"이면 그때 파일·엑셀 도구 사용)
-2. 다음 단계에 해당하는 도구(파일 생성, 엑셀 작성, 저장, 링크 제공 등)는 현재 단계에서 호출하지 마세요.
-3. 이 단계가 끝나면 수행한 내용만 한두 문장으로 보고하고, 추가 도구 호출 없이 종료하세요.`,
-        });
-      }
-
-      // 서버가 지정된 단계에서는 해당 서버(들)의 도구만 전달 → 여러 서버면 도구 합쳐서 제공
-      let toolsForStep = mcpTools;
-      const preferredServers = stepInfo?.servers?.length
-        ? stepInfo.servers
-        : stepInfo?.server
-        ? [stepInfo.server]
-        : [];
-      if (preferredServers.length > 0) {
-        const serverTools = await this.getMcpToolsForServers(preferredServers);
-        if (serverTools.length > 0) toolsForStep = serverTools;
-      }
-
-      while (round < maxToolRounds) {
-        const completion = await openaiClient.chat.completions.create({
-          model,
-          messages: openaiMessages,
-          tools: toolsForStep.length > 0 ? toolsForStep : undefined,
-          tool_choice: toolsForStep.length > 0 ? "auto" : undefined,
-        });
-        console.log("completion", completion);
-
-        const choice = completion.choices[0];
-        if (!choice?.message) {
-          const fallback: AgentChatResult = {
-            message: "No response from model.",
-            toolCallsUsed,
-            toolCalls: toolCallsLog,
-          };
-          if (finalizeOnCompletion && onEvent) {
-            onEvent({
-              type: "final_message",
-              message: fallback.message,
-              toolCallsUsed: fallback.toolCallsUsed,
-              toolCalls: fallback.toolCalls,
-            });
-          }
-          return {
-            completed: true,
-            result: fallback,
-            lastContent: fallback.message,
-          };
-        }
-
-        const msg = choice.message;
-        openaiMessages.push(msg);
-
-        const toolCalls = msg.tool_calls;
-
-        // 중간 assistant 메시지(계획/단계 설명 등)를 프론트로 전달
-        if (onEvent && toolCalls?.length) {
-          const rawContent = msg.content as
-            | string
-            | Array<{ type?: string; text?: string }>
-            | null
-            | undefined;
-
-          const content =
-            typeof rawContent === "string"
-              ? rawContent
-              : Array.isArray(rawContent)
-              ? rawContent
+    const resultMessages =
+      (result as { messages?: BaseMessage[] }).messages ?? [];
+    for (let i = 0; i < resultMessages.length; i++) {
+      const msg = resultMessages[i];
+      if (msg instanceof AIMessage) {
+        const content =
+          typeof msg.content === "string"
+            ? msg.content
+            : Array.isArray(msg.content)
+              ? (msg.content as { type?: string; text?: string }[])
                   .filter(
-                    (c) => c.type === "text" && typeof c.text === "string"
+                    (c) => c.type === "text" && typeof c.text === "string",
                   )
                   .map((c) => c.text)
                   .join("")
               : "";
-
-          if (content) {
-            onEvent({
-              type: "assistant_message",
-              content,
-            });
-          }
+        if (content && onEvent) {
+          onEvent({ type: "assistant_message", content });
         }
-
-        // tool_calls가 없으면 이 단계의 자연어 응답이 나온 것
-        if (!toolCalls?.length) {
-          const raw = msg.content as
-            | string
-            | Array<{ type?: string; text?: string }>
-            | null
-            | undefined;
-
-          const content =
-            typeof raw === "string"
-              ? raw
-              : Array.isArray(raw)
-              ? JSON.stringify(raw)
-              : "";
-
-          lastContent = content;
-
-          if (finalizeOnCompletion) {
-            const result: AgentChatResult = {
-              message: content,
-              toolCallsUsed,
-              toolCalls: toolCallsLog,
-            };
-
-            if (onEvent) {
-              onEvent({
-                type: "final_message",
-                message: result.message,
-                toolCallsUsed: result.toolCallsUsed,
-                toolCalls: result.toolCalls,
-              });
-            }
-
-            return { completed: true, result, lastContent: content };
-          }
-
-          // 중간 단계라면, 단계 결과를 assistant_message로만 보내고 다음 스텝으로 진행
-          if (onEvent && content) {
-            onEvent({
-              type: "assistant_message",
-              content,
-            });
-          }
-
-          return { completed: true, lastContent: content };
-        }
-
-        // tool_calls가 있는 경우: MCP 도구 실행
-        for (const tc of toolCalls) {
-          const name = tc.function?.name ?? "";
-          let args: Record<string, unknown> = {};
-          try {
-            if (tc.function?.arguments)
-              args = JSON.parse(tc.function.arguments);
-          } catch {
-            // ignore
-          }
+        const toolCalls = msg.tool_calls ?? [];
+        for (let j = 0; j < toolCalls.length; j++) {
+          const tc = toolCalls[j];
+          const name = tc.name ?? "";
+          const args = (tc.args ?? {}) as Record<string, unknown>;
           toolCallsLog.push({ name, args });
-
-          if (onEvent && name) {
-            onEvent({
-              type: "tool_call",
-              name,
-              args,
-            });
-          }
-
-          const result = await this.executeToolCall(name, args);
-
-          if (onEvent && name) {
-            onEvent({
-              type: "tool_result",
-              name,
-              output: result,
-            });
-          }
-
           toolCallsUsed++;
-          openaiMessages.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: result,
-          });
+          if (onEvent && name) {
+            onEvent({ type: "tool_call", name, args });
+          }
+          const toolMsg = resultMessages[i + 1 + j];
+          const output =
+            toolMsg && "content" in toolMsg
+              ? typeof toolMsg.content === "string"
+                ? toolMsg.content
+                : String(toolMsg.content ?? "")
+              : "";
+          if (onEvent && name) {
+            onEvent({ type: "tool_result", name, output });
+          }
         }
-
-        round++;
-      }
-
-      // 루프가 maxToolRounds에 도달한 경우
-      const fallback: AgentChatResult = {
-        message: lastContent || "Max tool rounds reached; ending turn.",
-        toolCallsUsed,
-        toolCalls: toolCallsLog,
-      };
-      if (finalizeOnCompletion && onEvent) {
-        onEvent({
-          type: "final_message",
-          message: fallback.message,
-          toolCallsUsed: fallback.toolCallsUsed,
-          toolCalls: fallback.toolCalls,
-        });
-      }
-      return {
-        completed: true,
-        result: finalizeOnCompletion ? fallback : undefined,
-        lastContent: fallback.message,
-      };
-    };
-
-    // 계획이 수립된 경우: 각 플랜 스텝마다 runStep을 한 번씩 실행
-    if (executionSteps && executionSteps.length > 0 && onEvent) {
-      let lastContent = "";
-
-      const stepServersLabel = (s: PlanStepInfo) =>
-        s.servers?.length ? s.servers.join(", ") : s.server ? s.server : "";
-
-      for (let i = 0; i < executionSteps.length; i++) {
-        const step = executionSteps[i];
-        const stepLabel =
-          step.description +
-          (stepServersLabel(step) ? ` (서버: ${stepServersLabel(step)})` : "");
-        const isLastStep = i === executionSteps.length - 1;
-
-        // 단계 시작 시 즉시 프론트로 "단계 N" 메시지 전송 (단계별로 보이도록)
-        onEvent({
-          type: "assistant_message",
-          content: `[단계 ${i + 1}/${executionSteps.length}] ${stepLabel}`,
-        });
-
-        const { result, lastContent: stepContent } = await runStep(
-          step,
-          i,
-          executionSteps,
-          isLastStep,
-          i >= 1 ? lastContent : undefined
-        );
-        lastContent = stepContent;
-
-        // 중간 단계에서 LLM이 텍스트를 안 냈으면 대체 메시지로 단계 완료 알림
-        if (!result && !stepContent) {
-          onEvent({
-            type: "assistant_message",
-            content: `→ 단계 ${i + 1} 완료: ${step.description}`,
-          });
-        }
-
-        // 다음 단계 전에 프론트가 렌더링할 수 있도록 짧은 대기
-        if (!result) {
-          await new Promise((r) => setTimeout(r, 80));
-        }
-
-        if (result) {
-          // 마지막 스텝에서 final_message까지 이미 전송된 상태
-          return result;
+        if (toolCalls.length > 0) {
+          i += toolCalls.length - 1; // 다음 루프에서 i++ 되므로 ToolMessage들만 건너뜀
+        } else if (content) {
+          finalMessage = content;
         }
       }
-
-      // 이론상 도달하지 않지만, 안전장치로 최종 결과 생성
-      const fallback: AgentChatResult = {
-        message: lastContent || "Max tool rounds reached; ending turn.",
-        toolCallsUsed,
-        toolCalls: toolCallsLog,
-      };
-      if (onEvent) {
-        onEvent({
-          type: "final_message",
-          message: fallback.message,
-          toolCallsUsed: fallback.toolCallsUsed,
-          toolCalls: fallback.toolCalls,
-        });
-      }
-      return fallback;
     }
 
-    // 계획이 없거나(onEvent가 없는 HTTP 요청 등) 단일 단계로 처리할 때: 기존과 동일하게 한 번의 runStep으로 처리
-    const { result } = await runStep(null, 0, [], true, undefined);
-    // runStep에서 항상 result를 채워주므로 non-null 단언
-    return result as AgentChatResult;
+    if (!finalMessage) {
+      const last = resultMessages[resultMessages.length - 1];
+      if (last && "content" in last) {
+        finalMessage =
+          typeof last.content === "string"
+            ? last.content
+            : Array.isArray(last.content)
+              ? (last.content as { text?: string }[])
+                  .filter((c) => c && typeof c.text === "string")
+                  .map((c) => c.text)
+                  .join("")
+              : "";
+      }
+    }
+    if (!finalMessage) {
+      finalMessage = "응답을 생성하지 못했습니다.";
+    }
+
+    const agentResult: AgentChatResult = {
+      message: finalMessage,
+      toolCallsUsed,
+      toolCalls: toolCallsLog,
+    };
+
+    if (onEvent) {
+      onEvent({
+        type: "final_message",
+        message: agentResult.message,
+        toolCallsUsed: agentResult.toolCallsUsed,
+        toolCalls: agentResult.toolCalls,
+      });
+    }
+
+    return agentResult;
   }
 }

@@ -21,7 +21,10 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron"
+      "electron",
+      "@nestjs/core",
+      "sharp",
+      "electron-winstaller"
     ]
   }
 }

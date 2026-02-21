@@ -26,13 +26,12 @@ export default function ChatPage() {
   const lastEventIndexRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 이벤트에서 스트리밍 텍스트 파생 (계획 + assistant_message 누적, final 전까지)
+  // 이벤트에서 스트리밍 텍스트 파생 (assistant_message 누적, final 전까지)
   const streamingContent =
     events.some((e) => e.type === "final_message") === false
       ? (() => {
           const parts: string[] = [];
           for (const ev of events) {
-            if (ev.type === "plan") parts.push(`**계획**\n${ev.content}`);
             if (ev.type === "assistant_message") parts.push(ev.content);
           }
           return parts.join("\n\n");
@@ -157,7 +156,7 @@ export default function ChatPage() {
                 )}
               </div>
             ))}
-            {/* 스트리밍 중: 한 말풍선에서 계획·중간 메시지가 실시간으로 갱신 */}
+            {/* 스트리밍 중: 한 말풍선에서 중간 메시지가 실시간으로 갱신 */}
             {streamingContent ? (
               <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2 animate-in fade-in duration-200 animate-streaming-border">
                 <div className="markdown-content prose prose-invert max-w-none animate-streaming-text">
