@@ -147,32 +147,32 @@ export class AgentService {
   }
 
   /** MCP 도구 목록을 LangChain StructuredTool[] 로 반환 (LangGraph 에이전트용). */
-  private async getMcpToolsAsLangChain(): Promise<ReturnType<typeof tool>[]> {
-    const servers = this.mcpStore.findAll();
-    const tools: ReturnType<typeof tool>[] = [];
-    const seen = new Set<string>();
-    for (const server of servers) {
-      const result = await listToolsFromMcpServer(server);
-      for (const t of result.tools) {
-        if (seen.has(t.name)) continue;
-        seen.add(t.name);
-        const toolName = t.name;
-        tools.push(
-          tool(
-            async (args: Record<string, unknown>) => {
-              return this.executeToolCall(toolName, args ?? {});
-            },
-            {
-              name: t.name,
-              description: t.description ?? "",
-              schema: z.record(z.unknown()),
-            },
-          ),
-        );
-      }
-    }
-    return tools;
-  }
+  // private async getMcpToolsAsLangChain(): Promise<DynamicStructuredTool[]> {
+  //   const servers = this.mcpStore.findAll();
+  //   const tools: DynamicStructuredTool[] = [];
+  //   const seen = new Set<string>();
+  //   for (const server of servers) {
+  //     const result = await listToolsFromMcpServer(server);
+  //     for (const t of result.tools) {
+  //       if (seen.has(t.name)) continue;
+  //       seen.add(t.name);
+  //       const toolName = t.name;
+  //       tools.push(
+  //         tool(
+  //           async (args: Record<string, unknown>) => {
+  //             return this.executeToolCall(toolName, args ?? {});
+  //           },
+  //           {
+  //             name: t.name,
+  //             description: t.description ?? "",
+  //             schema: z.record(z.unknown()),
+  //           },
+  //         ),
+  //       );
+  //     }
+  //   }
+  //   return tools;
+  // }
 
   async chat(
     options: AgentChatOptions,
@@ -183,7 +183,7 @@ export class AgentService {
     const { messages, model = defaultModel } = options;
 
     const llm = this.getLangChainModel(model);
-    const mcpTools = await this.getMcpToolsAsLangChain();
+    // const mcpTools = await this.getMcpToolsAsLangChain();
 
     const systemPrompt = `You are a helpful assistant named MagicClaw.
 You have access to tools (via MCP) to perform actions when necessary.
@@ -192,7 +192,7 @@ Reply in the same language as the user when appropriate.`;
 
     const agent = createAgent({
       model: llm,
-      tools: mcpTools,
+      // tools: mcpTools,
       systemPrompt,
     });
 
