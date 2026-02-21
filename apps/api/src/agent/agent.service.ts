@@ -7,15 +7,23 @@ import {
 } from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
-import { createAgent, tool } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
-import { z } from "zod";
 import {
   HumanMessage,
   AIMessage,
   SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
+import { tool } from "@langchain/core/tools";
+import {
+  StateGraph,
+  START,
+  END,
+  MessagesAnnotation,
+} from "@langchain/langgraph";
+import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import { z } from "zod";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -146,33 +154,61 @@ export class AgentService {
     });
   }
 
-  /** MCP 도구 목록을 LangChain StructuredTool[] 로 반환 (LangGraph 에이전트용). */
-  // private async getMcpToolsAsLangChain(): Promise<DynamicStructuredTool[]> {
-  //   const servers = this.mcpStore.findAll();
-  //   const tools: DynamicStructuredTool[] = [];
-  //   const seen = new Set<string>();
-  //   for (const server of servers) {
-  //     const result = await listToolsFromMcpServer(server);
-  //     for (const t of result.tools) {
-  //       if (seen.has(t.name)) continue;
-  //       seen.add(t.name);
-  //       const toolName = t.name;
-  //       tools.push(
-  //         tool(
-  //           async (args: Record<string, unknown>) => {
-  //             return this.executeToolCall(toolName, args ?? {});
-  //           },
-  //           {
-  //             name: t.name,
-  //             description: t.description ?? "",
-  //             schema: z.record(z.unknown()),
-  //           },
-  //         ),
-  //       );
-  //     }
-  //   }
-  //   return tools;
-  // }
+  /** MCP 도구 목록을 LangChain 도구 배열로 반환 (LangGraph ToolNode용). */
+  private async getMcpToolsAsLangChain(): Promise<StructuredToolInterface[]> {
+    const servers = this.mcpStore.findAll();
+    const tools: StructuredToolInterface[] = [];
+    const seen = new Set<string>();
+    for (const server of servers) {
+      const result = await listToolsFromMcpServer(server);
+      for (const t of result.tools) {
+        if (seen.has(t.name)) continue;
+        seen.add(t.name);
+        const toolName = t.name;
+        tools.push(
+          tool(
+            async (args: Record<string, unknown>) => {
+              return this.executeToolCall(toolName, args ?? {});
+            },
+            {
+              name: t.name,
+              description: t.description ?? "",
+              schema: z.record(z.unknown()),
+            },
+          ) as StructuredToolInterface,
+        );
+      }
+    }
+    return tools;
+  }
+
+  /** LangGraph 기반 에이전트 그래프 생성 (도구 없이도 동작). */
+  private createAgentGraph(
+    llm: ChatOpenAI,
+    mcpTools: StructuredToolInterface[],
+    systemPrompt: string,
+  ) {
+    const systemMessage = new SystemMessage({ content: systemPrompt });
+
+    const callModel = async (state: { messages: BaseMessage[] }) => {
+      const messages = [systemMessage, ...state.messages];
+      const modelWithTools =
+        mcpTools.length > 0 ? llm.bindTools(mcpTools) : llm;
+      const response = await modelWithTools.invoke(
+        messages as unknown as Parameters<typeof modelWithTools.invoke>[0],
+      );
+      return { messages: [response as unknown as BaseMessage] };
+    };
+
+    const graph = new StateGraph(MessagesAnnotation)
+      .addNode("model", callModel)
+      .addNode("tools", new ToolNode(mcpTools))
+      .addEdge(START, "model")
+      .addConditionalEdges("model", toolsCondition)
+      .addEdge("tools", "model");
+
+    return graph.compile();
+  }
 
   async chat(
     options: AgentChatOptions,
@@ -183,18 +219,14 @@ export class AgentService {
     const { messages, model = defaultModel } = options;
 
     const llm = this.getLangChainModel(model);
-    // const mcpTools = await this.getMcpToolsAsLangChain();
+    const mcpTools = await this.getMcpToolsAsLangChain();
 
     const systemPrompt = `You are a helpful assistant named MagicClaw.
 You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.`;
 
-    const agent = createAgent({
-      model: llm,
-      // tools: mcpTools,
-      systemPrompt,
-    });
+    const agent = this.createAgentGraph(llm, mcpTools, systemPrompt);
 
     const lcMessages: BaseMessage[] = messages.map((m) => {
       if (m.role === "system") return new SystemMessage({ content: m.content });
