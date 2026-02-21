@@ -7,9 +7,8 @@ import {
 } from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
-import { createDeepAgent } from "deepagents";
+import { createAgent, tool } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
-import { tool } from "langchain";
 import { z } from "zod";
 import {
   HumanMessage,
@@ -129,7 +128,7 @@ export class AgentService {
     return texts.join("\n");
   }
 
-  /** LLM 설정으로 ChatOpenAI 인스턴스 생성 (deepagents용). */
+  /** LLM 설정으로 ChatOpenAI 인스턴스 생성 (LangGraph 에이전트용). */
   private getLangChainModel(model?: string): ChatOpenAI {
     const defaultConfig = this.llmStore.findDefault();
     if (!defaultConfig) {
@@ -147,7 +146,7 @@ export class AgentService {
     });
   }
 
-  /** MCP 도구 목록을 LangChain StructuredTool[] 로 반환 (deepagents용). */
+  /** MCP 도구 목록을 LangChain StructuredTool[] 로 반환 (LangGraph 에이전트용). */
   private async getMcpToolsAsLangChain(): Promise<ReturnType<typeof tool>[]> {
     const servers = this.mcpStore.findAll();
     const tools: ReturnType<typeof tool>[] = [];
@@ -191,7 +190,7 @@ You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.`;
 
-    const agent = createDeepAgent({
+    const agent = createAgent({
       model: llm,
       tools: mcpTools,
       systemPrompt,
