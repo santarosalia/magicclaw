@@ -15,13 +15,7 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
-import {
-  StateGraph,
-  START,
-  END,
-  MessagesAnnotation,
-} from "@langchain/langgraph";
-import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
+import { createAgent } from "langchain";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 
@@ -84,12 +78,85 @@ function mcpToolToOpenAI(t: {
   };
 }
 
+/** ChatMessage[] → LangChain BaseMessage[] (API 입력을 그래프 state 형식으로). */
+function chatMessagesToLangChain(messages: ChatMessage[]): BaseMessage[] {
+  return messages.map((m) => {
+    if (m.role === "system") return new SystemMessage({ content: m.content });
+    if (m.role === "user") return new HumanMessage({ content: m.content });
+    return new AIMessage({ content: m.content });
+  });
+}
+
+/** BaseMessage content를 string으로 추출 (string | MessageContentBlock[] 지원). */
+function getMessageContentAsString(msg: BaseMessage): string {
+  const c = msg.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return (c as { type?: string; text?: string }[])
+      .filter((x) => x.type === "text" && typeof x.text === "string")
+      .map((x) => x.text)
+      .join("");
+  }
+  return "";
+}
+
+/** result.messages에서 툴 호출 로그와 최종 응답 텍스트 추출. 스트리밍 시 startIndex로 신규 메시지만 처리해 onEvent 발송. */
+function processResultMessages(
+  messages: BaseMessage[],
+  opts?: { onEvent?: (event: AgentEvent) => void; startIndex?: number }
+): {
+  toolCallsLog: ToolCallEntry[];
+  toolCallsUsed: number;
+  finalMessage: string;
+} {
+  const toolCallsLog: ToolCallEntry[] = [];
+  let toolCallsUsed = 0;
+  let finalMessage = "";
+  const start = opts?.startIndex ?? 0;
+  for (let i = start; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg instanceof AIMessage) {
+      const content = getMessageContentAsString(msg);
+      if (content && opts?.onEvent)
+        opts.onEvent({ type: "assistant_message", content });
+      const toolCalls = msg.tool_calls ?? [];
+      for (let j = 0; j < toolCalls.length; j++) {
+        const tc = toolCalls[j];
+        const name = tc.name ?? "";
+        const args = (tc.args ?? {}) as Record<string, unknown>;
+        toolCallsLog.push({ name, args });
+        toolCallsUsed++;
+        if (opts?.onEvent && name)
+          opts.onEvent({ type: "tool_call", name, args });
+        const toolMsg = messages[i + 1 + j];
+        const output =
+          toolMsg && "content" in toolMsg
+            ? getMessageContentAsString(toolMsg as BaseMessage)
+            : "";
+        if (opts?.onEvent && name)
+          opts.onEvent({ type: "tool_result", name, output });
+      }
+      if (toolCalls.length > 0) {
+        i += toolCalls.length - 1;
+      } else if (content) {
+        finalMessage = content;
+      }
+    }
+  }
+  if (!finalMessage && messages.length > 0) {
+    const last = messages[messages.length - 1];
+    if (last && "content" in last)
+      finalMessage = getMessageContentAsString(last as BaseMessage);
+  }
+  return { toolCallsLog, toolCallsUsed, finalMessage };
+}
+
 @Injectable()
 export class AgentService {
   private toolServerCache = new Map<string, McpServerConfig>();
   constructor(
     private readonly mcpStore: McpStoreService,
-    private readonly llmStore: LlmStoreService,
+    private readonly llmStore: LlmStoreService
   ) {}
 
   /** Collect all tools from registered MCP servers and return OpenAI-format tools. */
@@ -125,7 +192,7 @@ export class AgentService {
   /** Execute one tool call via MCP and return content for the assistant message. */
   private async executeToolCall(
     toolName: string,
-    args: Record<string, unknown>,
+    args: Record<string, unknown>
   ): Promise<string> {
     const server = await this.findServerForTool(toolName);
     if (!server) return `Error: No MCP server provides tool "${toolName}"`;
@@ -141,7 +208,7 @@ export class AgentService {
     const defaultConfig = this.llmStore.findDefault();
     if (!defaultConfig) {
       throw new Error(
-        "LLM 설정이 없습니다. LLM 관리 페이지에서 설정을 추가해주세요.",
+        "LLM 설정이 없습니다. LLM 관리 페이지에서 설정을 추가해주세요."
       );
     }
     const modelId = model ?? defaultConfig.model;
@@ -174,45 +241,17 @@ export class AgentService {
               name: t.name,
               description: t.description ?? "",
               schema: z.record(z.unknown()),
-            },
-          ) as StructuredToolInterface,
+            }
+          ) as StructuredToolInterface
         );
       }
     }
     return tools;
   }
 
-  /** LangGraph 기반 에이전트 그래프 생성 (도구 없이도 동작). */
-  private createAgentGraph(
-    llm: ChatOpenAI,
-    mcpTools: StructuredToolInterface[],
-    systemPrompt: string,
-  ) {
-    const systemMessage = new SystemMessage({ content: systemPrompt });
-
-    const callModel = async (state: { messages: BaseMessage[] }) => {
-      const messages = [systemMessage, ...state.messages];
-      const modelWithTools =
-        mcpTools.length > 0 ? llm.bindTools(mcpTools) : llm;
-      const response = await modelWithTools.invoke(
-        messages as unknown as Parameters<typeof modelWithTools.invoke>[0],
-      );
-      return { messages: [response as unknown as BaseMessage] };
-    };
-
-    const graph = new StateGraph(MessagesAnnotation)
-      .addNode("model", callModel)
-      .addNode("tools", new ToolNode(mcpTools))
-      .addEdge(START, "model")
-      .addConditionalEdges("model", toolsCondition)
-      .addEdge("tools", "model");
-
-    return graph.compile();
-  }
-
   async chat(
     options: AgentChatOptions,
-    onEvent?: (event: AgentEvent) => void,
+    onEvent?: (event: AgentEvent) => void
   ): Promise<AgentChatResult> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
@@ -226,87 +265,40 @@ You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.`;
 
-    const agent = this.createAgentGraph(llm, mcpTools, systemPrompt);
-
-    const lcMessages: BaseMessage[] = messages.map((m) => {
-      if (m.role === "system") return new SystemMessage({ content: m.content });
-      if (m.role === "user") return new HumanMessage({ content: m.content });
-      return new AIMessage({ content: m.content });
+    const agent = createAgent({
+      model: llm,
+      tools: mcpTools,
+      systemPrompt,
     });
 
-    const result = await agent.invoke({
-      messages: lcMessages,
-    });
+    const lcMessages = chatMessagesToLangChain(messages);
 
-    const toolCallsLog: ToolCallEntry[] = [];
-    let toolCallsUsed = 0;
-    let finalMessage = "";
+    let resultMessages: BaseMessage[] = [];
 
-    const resultMessages =
-      (result as { messages?: BaseMessage[] }).messages ?? [];
-    for (let i = 0; i < resultMessages.length; i++) {
-      const msg = resultMessages[i];
-      if (msg instanceof AIMessage) {
-        const content =
-          typeof msg.content === "string"
-            ? msg.content
-            : Array.isArray(msg.content)
-              ? (msg.content as { type?: string; text?: string }[])
-                  .filter(
-                    (c) => c.type === "text" && typeof c.text === "string",
-                  )
-                  .map((c) => c.text)
-                  .join("")
-              : "";
-        if (content && onEvent) {
-          onEvent({ type: "assistant_message", content });
-        }
-        const toolCalls = msg.tool_calls ?? [];
-        for (let j = 0; j < toolCalls.length; j++) {
-          const tc = toolCalls[j];
-          const name = tc.name ?? "";
-          const args = (tc.args ?? {}) as Record<string, unknown>;
-          toolCallsLog.push({ name, args });
-          toolCallsUsed++;
-          if (onEvent && name) {
-            onEvent({ type: "tool_call", name, args });
-          }
-          const toolMsg = resultMessages[i + 1 + j];
-          const output =
-            toolMsg && "content" in toolMsg
-              ? typeof toolMsg.content === "string"
-                ? toolMsg.content
-                : String(toolMsg.content ?? "")
-              : "";
-          if (onEvent && name) {
-            onEvent({ type: "tool_result", name, output });
-          }
-        }
-        if (toolCalls.length > 0) {
-          i += toolCalls.length - 1; // 다음 루프에서 i++ 되므로 ToolMessage들만 건너뜀
-        } else if (content) {
-          finalMessage = content;
-        }
+    if (onEvent) {
+      const stream = await agent.stream(
+        { messages: lcMessages },
+        { streamMode: "values" }
+      );
+      let prevLen = 0;
+      for await (const chunk of stream) {
+        const chunkMessages =
+          (chunk as { messages?: BaseMessage[] }).messages ?? [];
+        processResultMessages(chunkMessages, { onEvent, startIndex: prevLen });
+        prevLen = chunkMessages.length;
+        resultMessages = chunkMessages;
       }
+    } else {
+      const result = await agent.invoke({ messages: lcMessages });
+      resultMessages = (result as { messages?: BaseMessage[] }).messages ?? [];
     }
 
-    if (!finalMessage) {
-      const last = resultMessages[resultMessages.length - 1];
-      if (last && "content" in last) {
-        finalMessage =
-          typeof last.content === "string"
-            ? last.content
-            : Array.isArray(last.content)
-              ? (last.content as { text?: string }[])
-                  .filter((c) => c && typeof c.text === "string")
-                  .map((c) => c.text)
-                  .join("")
-              : "";
-      }
-    }
-    if (!finalMessage) {
-      finalMessage = "응답을 생성하지 못했습니다.";
-    }
+    const {
+      toolCallsLog,
+      toolCallsUsed,
+      finalMessage: rawFinal,
+    } = processResultMessages(resultMessages);
+    const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
 
     const agentResult: AgentChatResult = {
       message: finalMessage,
