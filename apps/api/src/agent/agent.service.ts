@@ -1,5 +1,8 @@
 import { Injectable } from "@nestjs/common";
-import { listToolsFromMcpServer } from "../mcp/mcp-client.service.js";
+import {
+  listToolsFromMcpServer,
+  getMcpToolsAsLangChain,
+} from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
 import { ChatOpenAI } from "@langchain/openai";
@@ -11,7 +14,6 @@ import {
 } from "@langchain/core/messages";
 import { createAgent } from "langchain";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -170,42 +172,13 @@ export class AgentService {
     });
   }
 
-  /** @langchain/mcp-adapters로 MCP 서버 연결 후 LangChain 도구 반환. 사용 후 close() 호출 필요. */
+  /** MCP 클라이언트 서비스를 통해 LangChain 도구 반환. 사용 후 close() 호출 필요. */
   private async getMcpToolsAsLangChain(): Promise<{
     tools: StructuredToolInterface[];
     close: () => Promise<void>;
   }> {
     const servers = this.mcpStore.findAll();
-    if (servers.length === 0) {
-      return { tools: [], close: async () => {} };
-    }
-    const mcpServers: Record<
-      string,
-      {
-        transport: "stdio";
-        command: string;
-        args: string[];
-        env?: Record<string, string>;
-      }
-    > = {};
-    for (const s of servers) {
-      mcpServers[s.id] = {
-        transport: "stdio",
-        command: s.command,
-        args: s.args ?? [],
-        ...(s.env && Object.keys(s.env).length > 0 && { env: s.env }),
-      };
-    }
-    const client = new MultiServerMCPClient({
-      mcpServers,
-      useStandardContentBlocks: true,
-      onConnectionError: "ignore",
-    });
-    const tools = await client.getTools();
-    return {
-      tools,
-      close: () => client.close(),
-    };
+    return getMcpToolsAsLangChain(servers);
   }
 
   async chat(
@@ -217,8 +190,7 @@ export class AgentService {
     const { messages, model = defaultModel } = options;
 
     const llm = this.getLangChainModel(model);
-    const { tools: mcpTools, close: closeMcp } =
-      await this.getMcpToolsAsLangChain();
+    const { tools, close: closeMcp } = await this.getMcpToolsAsLangChain();
 
     try {
       const systemPrompt = `You are a helpful assistant named MagicClaw.
@@ -228,7 +200,7 @@ Reply in the same language as the user when appropriate.`;
 
       const agent = createAgent({
         model: llm,
-        tools: mcpTools,
+        tools,
         systemPrompt,
       });
 
