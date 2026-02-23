@@ -33,12 +33,13 @@ function parsePlanSteps(planText: string): string[] {
   return steps.length > 0 ? steps : [trimmed];
 }
 
-/** 플래닝 에이전트용 state: messages + 단계별 계획 + 현재 단계 인덱스. */
+/** 플래닝 에이전트용 state: messages + 라우터 판단 + 단계별 계획 + 현재 단계 인덱스. */
 const PlanStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
     default: () => [],
   }),
+  isMultiStep: Annotation<boolean>(),
   planSteps: Annotation<string[]>(),
   currentStepIndex: Annotation<number>(),
 });
@@ -211,12 +212,30 @@ export class AgentService {
     return getMcpToolsAsLangChain(servers);
   }
 
-  /** LangGraph StateGraph: planner → (agent ↔ tools) → step_done → 다음 스텝 or END. */
+  /** LangGraph StateGraph: router → (단순: agent_direct | 단계: planner → agent) + 공용 tools. */
   private buildAgentGraph(
     llm: ChatOpenAI,
     tools: StructuredToolInterface[],
     systemPrompt: string
   ) {
+    const routerPrompt = `You are a task classifier. Based on the user's latest message, decide if the task is:
+- SIMPLE: one or two quick actions (e.g. single search, one click, one query). Reply with exactly: SIMPLE
+- MULTI_STEP: requires a clear sequence of several steps (e.g. open page, then search, then copy, then paste elsewhere). Reply with exactly: MULTI_STEP
+
+Reply with only one word: SIMPLE or MULTI_STEP.`;
+
+    const routerNode = async (state: PlanState) => {
+      const withSystem = [
+        new SystemMessage({ content: routerPrompt }),
+        ...state.messages,
+      ];
+      const response = await llm.invoke(withSystem);
+      const text = getMessageContentAsString(response).trim().toUpperCase();
+      const isMultiStep =
+        text.includes("MULTI") || text === "MULTI_STEP" || text.startsWith("MULTI");
+      return { isMultiStep };
+    };
+
     const planPrompt = `You are a planning assistant. Based on the conversation, create a brief step-by-step plan to fulfill the user's request. Use the same language as the user. Output one step per line, each line starting with "1. ", "2. ", etc. If the request is simple, output a single step. Output ONLY the plan, no other text or tools.`;
 
     const plannerNode = async (state: PlanState) => {
@@ -243,6 +262,18 @@ export class AgentService {
     };
 
     const llmWithTools = llm.bindTools(tools);
+
+    /** 단순 작업용: 스텝 제약 없이 시스템 프롬프트만으로 도구 사용. */
+    const agentDirectNode = async (state: PlanState) => {
+      const withSystem = [
+        new SystemMessage({ content: systemPrompt }),
+        ...state.messages,
+      ];
+      const response = await llmWithTools.invoke(withSystem);
+      return { messages: [response] };
+    };
+
+    /** 단계 작업용: 현재 스텝만 실행. */
     const agentNode = async (state: PlanState) => {
       const steps = state.planSteps ?? [];
       const idx = state.currentStepIndex ?? 0;
@@ -262,14 +293,23 @@ export class AgentService {
       currentStepIndex: (state.currentStepIndex ?? 0) + 1,
     });
 
-    /** agent 다음: 도구 호출 있음 → tools, 없음 → step_done (toolsCondition은 END를 반환하므로 커스텀 사용). */
-    const agentToToolsOrStepDone = (state: PlanState): "tools" | "step_done" => {
+    const hasToolCalls = (state: PlanState) => {
       const messages = state.messages ?? [];
       const last = messages[messages.length - 1];
-      if (last && "tool_calls" in last && Array.isArray(last.tool_calls) && last.tool_calls.length > 0)
-        return "tools";
-      return "step_done";
+      return !!(last && "tool_calls" in last && Array.isArray(last.tool_calls) && last.tool_calls.length > 0);
     };
+
+    const routeFromRouter = (state: PlanState): "planner" | "agent_direct" =>
+      state.isMultiStep ? "planner" : "agent_direct";
+
+    const agentDirectToToolsOrEnd = (state: PlanState): "tools" | typeof END =>
+      hasToolCalls(state) ? "tools" : END;
+
+    const agentToToolsOrStepDone = (state: PlanState): "tools" | "step_done" =>
+      hasToolCalls(state) ? "tools" : "step_done";
+
+    const routeFromTools = (state: PlanState): "agent" | "agent_direct" =>
+      state.isMultiStep ? "agent" : "agent_direct";
 
     const routeAfterStep = (state: PlanState): "agent" | typeof END => {
       const steps = state.planSteps ?? [];
@@ -279,14 +319,18 @@ export class AgentService {
 
     const toolNode = new ToolNode(tools, { handleToolErrors: true });
     const builder = new StateGraph(PlanStateAnnotation)
+      .addNode("router", routerNode)
       .addNode("planner", plannerNode)
+      .addNode("agent_direct", agentDirectNode)
       .addNode("agent", agentNode)
       .addNode("tools", toolNode)
       .addNode("step_done", stepDoneNode)
-      .addEdge(START, "planner")
+      .addEdge(START, "router")
+      .addConditionalEdges("router", routeFromRouter, ["planner", "agent_direct"])
       .addEdge("planner", "agent")
+      .addConditionalEdges("agent_direct", agentDirectToToolsOrEnd, ["tools", END])
+      .addConditionalEdges("tools", routeFromTools, ["agent", "agent_direct"])
       .addConditionalEdges("agent", agentToToolsOrStepDone, ["tools", "step_done"])
-      .addEdge("tools", "agent")
       .addConditionalEdges("step_done", routeAfterStep, ["agent", END]);
     return builder.compile();
   }
