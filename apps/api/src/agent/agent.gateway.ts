@@ -6,7 +6,11 @@ import {
 } from "@nestjs/websockets";
 import type { Server, Socket } from "socket.io";
 import { WebSocketServer } from "@nestjs/websockets";
-import { AgentService, type AgentEvent, type ChatMessage } from "./agent.service.js";
+import {
+  AgentService,
+  type AgentEvent,
+  type ChatMessage,
+} from "./agent.service.js";
 
 @WebSocketGateway({
   namespace: "/agent",
@@ -44,4 +48,3 @@ export class AgentGateway {
     );
   }
 }
-

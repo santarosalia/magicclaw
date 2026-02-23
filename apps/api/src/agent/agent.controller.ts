@@ -40,7 +40,7 @@ export class AgentController {
       {
         messages,
         model: body.model,
-      },
+      }
       // HTTP 요청에서는 이벤트 스트리밍을 사용하지 않으므로 콜백은 전달하지 않는다.
     );
     return result;

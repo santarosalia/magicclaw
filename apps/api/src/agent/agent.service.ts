@@ -147,7 +147,7 @@ export class AgentService {
     const modelId = model ?? defaultConfig.model;
     return new ChatOpenAI({
       model: modelId,
-      openAIApiKey: defaultConfig.apiKey || "not-needed",
+      apiKey: defaultConfig.apiKey || "not-needed",
       configuration: defaultConfig.baseURL
         ? { baseURL: defaultConfig.baseURL }
         : undefined,
