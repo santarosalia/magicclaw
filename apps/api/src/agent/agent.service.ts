@@ -12,8 +12,25 @@ import {
   SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import { createAgent } from "langchain";
+import {
+  StateGraph,
+  Annotation,
+  messagesStateReducer,
+  START,
+  END,
+} from "@langchain/langgraph";
+import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+
+/** 플래닝 에이전트용 state: messages + plan(계획 텍스트). */
+const PlanStateAnnotation = Annotation.Root({
+  messages: Annotation<BaseMessage[]>({
+    reducer: messagesStateReducer,
+    default: () => [],
+  }),
+  plan: Annotation<string>(), // LastValue: 최신 계획만 유지
+});
+type PlanState = typeof PlanStateAnnotation.State;
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -26,6 +43,7 @@ export interface AgentChatOptions {
 }
 
 export type AgentEvent =
+  | { type: "plan"; content: string }
   | {
       type: "tool_call";
       name: string;
@@ -181,6 +199,60 @@ export class AgentService {
     return getMcpToolsAsLangChain(servers);
   }
 
+  /** LangGraph StateGraph로 플래닝 에이전트 그래프 생성 (planner → agent + 도구). */
+  private buildAgentGraph(
+    llm: ChatOpenAI,
+    tools: StructuredToolInterface[],
+    systemPrompt: string
+  ) {
+    const planPrompt = `You are a planning assistant. Based on the conversation, create a very brief step-by-step plan to fulfill the user's request. Use the same language as the user. If the request is simple, output a single step. Output ONLY the plan, no other text or tools.`;
+
+    const plannerNode = async (state: PlanState) => {
+      const withSystem = [
+        new SystemMessage({ content: planPrompt }),
+        ...state.messages,
+      ];
+      const response = await llm.invoke(withSystem);
+      const planText = getMessageContentAsString(response);
+      const planDisplay = planText.trim() || "(No plan)";
+      return {
+        plan: planDisplay,
+        messages: [
+          new AIMessage({
+            content: `[Plan]\n${planDisplay}`,
+          }),
+        ],
+      };
+    };
+
+    const llmWithTools = llm.bindTools(tools);
+    const agentNode = async (state: PlanState) => {
+      const planSection =
+        state.plan && String(state.plan).trim()
+          ? `\n\nCurrent plan to follow:\n${state.plan}`
+          : "";
+      const withSystem = [
+        new SystemMessage({
+          content: systemPrompt + planSection,
+        }),
+        ...state.messages,
+      ];
+      const response = await llmWithTools.invoke(withSystem);
+      return { messages: [response] };
+    };
+
+    const toolNode = new ToolNode(tools, { handleToolErrors: true });
+    const builder = new StateGraph(PlanStateAnnotation)
+      .addNode("planner", plannerNode)
+      .addNode("agent", agentNode)
+      .addNode("tools", toolNode)
+      .addEdge(START, "planner")
+      .addEdge("planner", "agent")
+      .addConditionalEdges("agent", toolsCondition, ["tools", END])
+      .addEdge("tools", "agent");
+    return builder.compile();
+  }
+
   async chat(
     options: AgentChatOptions,
     onEvent?: (event: AgentEvent) => void
@@ -198,26 +270,37 @@ You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.`;
 
-      const agent = createAgent({
-        model: llm,
-        tools,
-        systemPrompt,
-      });
+      const graph = this.buildAgentGraph(llm, tools, systemPrompt);
 
       const lcMessages = chatMessagesToLangChain(messages);
+      const initialState: { messages: BaseMessage[] } = {
+        messages: lcMessages,
+      };
 
       let resultMessages: BaseMessage[] = [];
+      let planEmitted = false;
 
       if (onEvent) {
-        const stream = await agent.stream(
-          { messages: lcMessages },
-          { streamMode: "values" }
-        );
+        const stream = await graph.stream(initialState, {
+          streamMode: "values",
+        });
         let prevLen = 0;
         let lastEmittedContentLength = 0;
         for await (const chunk of stream) {
-          const chunkMessages =
-            (chunk as { messages?: BaseMessage[] }).messages ?? [];
+          const stateChunk = chunk as {
+            messages?: BaseMessage[];
+            plan?: string;
+          };
+          const chunkMessages = stateChunk.messages ?? [];
+          // 플랜 이벤트: planner 노드 이후 첫 plan 있을 때 한 번만 발송
+          if (
+            !planEmitted &&
+            stateChunk.plan &&
+            String(stateChunk.plan).trim()
+          ) {
+            onEvent({ type: "plan", content: String(stateChunk.plan).trim() });
+            planEmitted = true;
+          }
           // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
           const lastMsg = chunkMessages[chunkMessages.length - 1];
           if (lastMsg instanceof AIMessage) {
@@ -230,10 +313,8 @@ Reply in the same language as the user when appropriate.`;
               lastEmittedContentLength = content.length;
             }
           } else {
-            // ToolMessage 등으로 바뀌면 다음 AIMessage에서 다시 누적
             lastEmittedContentLength = 0;
           }
-          // tool_call / tool_result는 신규 메시지만 처리
           processResultMessages(chunkMessages, {
             onEvent: (e) => {
               if (e.type !== "assistant_message") onEvent(e);
@@ -244,9 +325,11 @@ Reply in the same language as the user when appropriate.`;
           resultMessages = chunkMessages;
         }
       } else {
-        const result = await agent.invoke({ messages: lcMessages });
-        resultMessages =
-          (result as { messages?: BaseMessage[] }).messages ?? [];
+        const result = (await graph.invoke(initialState)) as {
+          messages?: BaseMessage[];
+          plan?: string;
+        };
+        resultMessages = result.messages ?? [];
       }
 
       const {
