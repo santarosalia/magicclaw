@@ -19,16 +19,28 @@ import {
   START,
   END,
 } from "@langchain/langgraph";
-import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 
-/** 플래닝 에이전트용 state: messages + plan(계획 텍스트). */
+/** 플랜 텍스트를 번호/불릿 기준으로 단계 배열로 파싱. */
+function parsePlanSteps(planText: string): string[] {
+  const trimmed = planText.trim();
+  if (!trimmed) return [];
+  const lines = trimmed.split(/\n/).map((s) => s.trim()).filter(Boolean);
+  const steps = lines.map((line) =>
+    line.replace(/^\s*(\d+[.)]\s*|[\-\*]\s+)/i, "").trim()
+  );
+  return steps.length > 0 ? steps : [trimmed];
+}
+
+/** 플래닝 에이전트용 state: messages + 단계별 계획 + 현재 단계 인덱스. */
 const PlanStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
     default: () => [],
   }),
-  plan: Annotation<string>(), // LastValue: 최신 계획만 유지
+  planSteps: Annotation<string[]>(),
+  currentStepIndex: Annotation<number>(),
 });
 type PlanState = typeof PlanStateAnnotation.State;
 
@@ -199,13 +211,13 @@ export class AgentService {
     return getMcpToolsAsLangChain(servers);
   }
 
-  /** LangGraph StateGraph로 플래닝 에이전트 그래프 생성 (planner → agent + 도구). */
+  /** LangGraph StateGraph: planner → (agent ↔ tools) → step_done → 다음 스텝 or END. */
   private buildAgentGraph(
     llm: ChatOpenAI,
     tools: StructuredToolInterface[],
     systemPrompt: string
   ) {
-    const planPrompt = `You are a planning assistant. Based on the conversation, create a very brief step-by-step plan to fulfill the user's request. Use the same language as the user. If the request is simple, output a single step. Output ONLY the plan, no other text or tools.`;
+    const planPrompt = `You are a planning assistant. Based on the conversation, create a brief step-by-step plan to fulfill the user's request. Use the same language as the user. Output one step per line, each line starting with "1. ", "2. ", etc. If the request is simple, output a single step. Output ONLY the plan, no other text or tools.`;
 
     const plannerNode = async (state: PlanState) => {
       const withSystem = [
@@ -213,10 +225,15 @@ export class AgentService {
         ...state.messages,
       ];
       const response = await llm.invoke(withSystem);
-      const planText = getMessageContentAsString(response);
-      const planDisplay = planText.trim() || "(No plan)";
+      const planText = getMessageContentAsString(response).trim() || "(No plan)";
+      const planSteps = parsePlanSteps(planText);
+      const planDisplay =
+        planSteps.length > 0
+          ? planSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+          : planText;
       return {
-        plan: planDisplay,
+        planSteps,
+        currentStepIndex: 0,
         messages: [
           new AIMessage({
             content: `[Plan]\n${planDisplay}`,
@@ -227,13 +244,13 @@ export class AgentService {
 
     const llmWithTools = llm.bindTools(tools);
     const agentNode = async (state: PlanState) => {
-      const planSection =
-        state.plan && String(state.plan).trim()
-          ? `\n\nCurrent plan to follow:\n${state.plan}`
-          : "";
+      const steps = state.planSteps ?? [];
+      const idx = state.currentStepIndex ?? 0;
+      const currentStep = steps[idx]?.trim() || "(Complete the task.)";
+      const stepSection = `\n\nExecute ONLY this step (step ${idx + 1} of ${steps.length || 1}): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`;
       const withSystem = [
         new SystemMessage({
-          content: systemPrompt + planSection,
+          content: systemPrompt + stepSection,
         }),
         ...state.messages,
       ];
@@ -241,15 +258,36 @@ export class AgentService {
       return { messages: [response] };
     };
 
+    const stepDoneNode = (state: PlanState) => ({
+      currentStepIndex: (state.currentStepIndex ?? 0) + 1,
+    });
+
+    /** agent 다음: 도구 호출 있음 → tools, 없음 → step_done (toolsCondition은 END를 반환하므로 커스텀 사용). */
+    const agentToToolsOrStepDone = (state: PlanState): "tools" | "step_done" => {
+      const messages = state.messages ?? [];
+      const last = messages[messages.length - 1];
+      if (last && "tool_calls" in last && Array.isArray(last.tool_calls) && last.tool_calls.length > 0)
+        return "tools";
+      return "step_done";
+    };
+
+    const routeAfterStep = (state: PlanState): "agent" | typeof END => {
+      const steps = state.planSteps ?? [];
+      const nextIdx = state.currentStepIndex ?? 0;
+      return nextIdx < steps.length ? "agent" : END;
+    };
+
     const toolNode = new ToolNode(tools, { handleToolErrors: true });
     const builder = new StateGraph(PlanStateAnnotation)
       .addNode("planner", plannerNode)
       .addNode("agent", agentNode)
       .addNode("tools", toolNode)
+      .addNode("step_done", stepDoneNode)
       .addEdge(START, "planner")
       .addEdge("planner", "agent")
-      .addConditionalEdges("agent", toolsCondition, ["tools", END])
-      .addEdge("tools", "agent");
+      .addConditionalEdges("agent", agentToToolsOrStepDone, ["tools", "step_done"])
+      .addEdge("tools", "agent")
+      .addConditionalEdges("step_done", routeAfterStep, ["agent", END]);
     return builder.compile();
   }
 
@@ -283,22 +321,29 @@ Reply in the same language as the user when appropriate.`;
       if (onEvent) {
         const stream = await graph.stream(initialState, {
           streamMode: "values",
+          recursionLimit: 100,
         });
         let prevLen = 0;
         let lastEmittedContentLength = 0;
         for await (const chunk of stream) {
           const stateChunk = chunk as {
             messages?: BaseMessage[];
-            plan?: string;
+            planSteps?: string[];
+            currentStepIndex?: number;
           };
           const chunkMessages = stateChunk.messages ?? [];
-          // 플랜 이벤트: planner 노드 이후 첫 plan 있을 때 한 번만 발송
+          // 플랜 이벤트: planner 노드 이후 planSteps 있을 때 한 번만 발송
           if (
             !planEmitted &&
-            stateChunk.plan &&
-            String(stateChunk.plan).trim()
+            Array.isArray(stateChunk.planSteps) &&
+            stateChunk.planSteps.length > 0
           ) {
-            onEvent({ type: "plan", content: String(stateChunk.plan).trim() });
+            onEvent({
+              type: "plan",
+              content: stateChunk.planSteps
+                .map((s, i) => `${i + 1}. ${s}`)
+                .join("\n"),
+            });
             planEmitted = true;
           }
           // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
@@ -325,9 +370,12 @@ Reply in the same language as the user when appropriate.`;
           resultMessages = chunkMessages;
         }
       } else {
-        const result = (await graph.invoke(initialState)) as {
+        const result = (await graph.invoke(initialState, {
+          recursionLimit: 100,
+        })) as {
           messages?: BaseMessage[];
-          plan?: string;
+          planSteps?: string[];
+          currentStepIndex?: number;
         };
         resultMessages = result.messages ?? [];
       }
