@@ -214,11 +214,30 @@ Reply in the same language as the user when appropriate.`;
           { streamMode: "values" }
         );
         let prevLen = 0;
+        let lastEmittedContentLength = 0;
         for await (const chunk of stream) {
           const chunkMessages =
             (chunk as { messages?: BaseMessage[] }).messages ?? [];
+          // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
+          const lastMsg = chunkMessages[chunkMessages.length - 1];
+          if (lastMsg instanceof AIMessage) {
+            const content = getMessageContentAsString(lastMsg);
+            if (content.length > lastEmittedContentLength) {
+              onEvent({
+                type: "assistant_message",
+                content: content.slice(lastEmittedContentLength),
+              });
+              lastEmittedContentLength = content.length;
+            }
+          } else {
+            // ToolMessage 등으로 바뀌면 다음 AIMessage에서 다시 누적
+            lastEmittedContentLength = 0;
+          }
+          // tool_call / tool_result는 신규 메시지만 처리
           processResultMessages(chunkMessages, {
-            onEvent,
+            onEvent: (e) => {
+              if (e.type !== "assistant_message") onEvent(e);
+            },
             startIndex: prevLen,
           });
           prevLen = chunkMessages.length;
