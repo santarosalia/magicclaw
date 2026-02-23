@@ -1,10 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import OpenAI from "openai";
-import type { McpServerConfig } from "../mcp/dto/mcp-server.dto.js";
-import {
-  callMcpTool,
-  listToolsFromMcpServer,
-} from "../mcp/mcp-client.service.js";
+import { listToolsFromMcpServer } from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
 import { ChatOpenAI } from "@langchain/openai";
@@ -14,10 +9,9 @@ import {
   SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import { tool } from "@langchain/core/tools";
 import { createAgent } from "langchain";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { z } from "zod";
+import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -60,22 +54,6 @@ export interface AgentChatResult {
   message: string;
   toolCallsUsed: number;
   toolCalls: ToolCallEntry[];
-}
-
-/** Map MCP tool to OpenAI tool definition format */
-function mcpToolToOpenAI(t: {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}): OpenAI.Chat.Completions.ChatCompletionTool {
-  return {
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description ?? "",
-      parameters: t.inputSchema ?? { type: "object", properties: {} },
-    },
-  };
 }
 
 /** ChatMessage[] → LangChain BaseMessage[] (API 입력을 그래프 state 형식으로). */
@@ -153,54 +131,25 @@ function processResultMessages(
 
 @Injectable()
 export class AgentService {
-  private toolServerCache = new Map<string, McpServerConfig>();
   constructor(
     private readonly mcpStore: McpStoreService,
     private readonly llmStore: LlmStoreService
   ) {}
 
-  /** Collect all tools from registered MCP servers and return OpenAI-format tools. */
-  async getMcpToolsAsOpenAI(): Promise<
-    OpenAI.Chat.Completions.ChatCompletionTool[]
-  > {
+  /** 등록된 MCP 서버에서 도구 목록만 반환 (API 목록용). */
+  async getMcpToolsList(): Promise<{ name: string; description?: string }[]> {
     const servers = this.mcpStore.findAll();
-    const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [];
+    const seen = new Set<string>();
+    const tools: { name: string; description?: string }[] = [];
     for (const server of servers) {
       const result = await listToolsFromMcpServer(server);
       for (const t of result.tools) {
-        tools.push(mcpToolToOpenAI(t));
+        if (seen.has(t.name)) continue;
+        seen.add(t.name);
+        tools.push({ name: t.name, description: t.description });
       }
     }
     return tools;
-  }
-
-  /** Resolve which MCP server has this tool (by re-listing; can be optimized with cache). */
-  private async findServerForTool(toolName: string) {
-    if (this.toolServerCache.has(toolName)) {
-      return this.toolServerCache.get(toolName);
-    }
-
-    for (const server of this.mcpStore.findAll()) {
-      const result = await listToolsFromMcpServer(server);
-      if (result.tools.some((t) => t.name === toolName)) {
-        this.toolServerCache.set(toolName, server);
-        return server;
-      }
-    }
-  }
-
-  /** Execute one tool call via MCP and return content for the assistant message. */
-  private async executeToolCall(
-    toolName: string,
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const server = await this.findServerForTool(toolName);
-    if (!server) return `Error: No MCP server provides tool "${toolName}"`;
-    const result = await callMcpTool(server, toolName, args);
-    const texts = result.content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text);
-    return texts.join("\n");
   }
 
   /** LLM 설정으로 ChatOpenAI 인스턴스 생성 (LangGraph 에이전트용). */
@@ -221,32 +170,42 @@ export class AgentService {
     });
   }
 
-  /** MCP 도구 목록을 LangChain 도구 배열로 반환 (LangGraph ToolNode용). */
-  private async getMcpToolsAsLangChain(): Promise<StructuredToolInterface[]> {
+  /** @langchain/mcp-adapters로 MCP 서버 연결 후 LangChain 도구 반환. 사용 후 close() 호출 필요. */
+  private async getMcpToolsAsLangChain(): Promise<{
+    tools: StructuredToolInterface[];
+    close: () => Promise<void>;
+  }> {
     const servers = this.mcpStore.findAll();
-    const tools: StructuredToolInterface[] = [];
-    const seen = new Set<string>();
-    for (const server of servers) {
-      const result = await listToolsFromMcpServer(server);
-      for (const t of result.tools) {
-        if (seen.has(t.name)) continue;
-        seen.add(t.name);
-        const toolName = t.name;
-        tools.push(
-          tool(
-            async (args: Record<string, unknown>) => {
-              return this.executeToolCall(toolName, args ?? {});
-            },
-            {
-              name: t.name,
-              description: t.description ?? "",
-              schema: z.record(z.unknown()),
-            }
-          ) as StructuredToolInterface
-        );
-      }
+    if (servers.length === 0) {
+      return { tools: [], close: async () => {} };
     }
-    return tools;
+    const mcpServers: Record<
+      string,
+      {
+        transport: "stdio";
+        command: string;
+        args: string[];
+        env?: Record<string, string>;
+      }
+    > = {};
+    for (const s of servers) {
+      mcpServers[s.id] = {
+        transport: "stdio",
+        command: s.command,
+        args: s.args ?? [],
+        ...(s.env && Object.keys(s.env).length > 0 && { env: s.env }),
+      };
+    }
+    const client = new MultiServerMCPClient({
+      mcpServers,
+      useStandardContentBlocks: true,
+      onConnectionError: "ignore",
+    });
+    const tools = await client.getTools();
+    return {
+      tools,
+      close: () => client.close(),
+    };
   }
 
   async chat(
@@ -258,63 +217,72 @@ export class AgentService {
     const { messages, model = defaultModel } = options;
 
     const llm = this.getLangChainModel(model);
-    const mcpTools = await this.getMcpToolsAsLangChain();
+    const { tools: mcpTools, close: closeMcp } =
+      await this.getMcpToolsAsLangChain();
 
-    const systemPrompt = `You are a helpful assistant named MagicClaw.
+    try {
+      const systemPrompt = `You are a helpful assistant named MagicClaw.
 You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.`;
 
-    const agent = createAgent({
-      model: llm,
-      tools: mcpTools,
-      systemPrompt,
-    });
-
-    const lcMessages = chatMessagesToLangChain(messages);
-
-    let resultMessages: BaseMessage[] = [];
-
-    if (onEvent) {
-      const stream = await agent.stream(
-        { messages: lcMessages },
-        { streamMode: "values" }
-      );
-      let prevLen = 0;
-      for await (const chunk of stream) {
-        const chunkMessages =
-          (chunk as { messages?: BaseMessage[] }).messages ?? [];
-        processResultMessages(chunkMessages, { onEvent, startIndex: prevLen });
-        prevLen = chunkMessages.length;
-        resultMessages = chunkMessages;
-      }
-    } else {
-      const result = await agent.invoke({ messages: lcMessages });
-      resultMessages = (result as { messages?: BaseMessage[] }).messages ?? [];
-    }
-
-    const {
-      toolCallsLog,
-      toolCallsUsed,
-      finalMessage: rawFinal,
-    } = processResultMessages(resultMessages);
-    const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
-
-    const agentResult: AgentChatResult = {
-      message: finalMessage,
-      toolCallsUsed,
-      toolCalls: toolCallsLog,
-    };
-
-    if (onEvent) {
-      onEvent({
-        type: "final_message",
-        message: agentResult.message,
-        toolCallsUsed: agentResult.toolCallsUsed,
-        toolCalls: agentResult.toolCalls,
+      const agent = createAgent({
+        model: llm,
+        tools: mcpTools,
+        systemPrompt,
       });
-    }
 
-    return agentResult;
+      const lcMessages = chatMessagesToLangChain(messages);
+
+      let resultMessages: BaseMessage[] = [];
+
+      if (onEvent) {
+        const stream = await agent.stream(
+          { messages: lcMessages },
+          { streamMode: "values" }
+        );
+        let prevLen = 0;
+        for await (const chunk of stream) {
+          const chunkMessages =
+            (chunk as { messages?: BaseMessage[] }).messages ?? [];
+          processResultMessages(chunkMessages, {
+            onEvent,
+            startIndex: prevLen,
+          });
+          prevLen = chunkMessages.length;
+          resultMessages = chunkMessages;
+        }
+      } else {
+        const result = await agent.invoke({ messages: lcMessages });
+        resultMessages =
+          (result as { messages?: BaseMessage[] }).messages ?? [];
+      }
+
+      const {
+        toolCallsLog,
+        toolCallsUsed,
+        finalMessage: rawFinal,
+      } = processResultMessages(resultMessages);
+      const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
+
+      const agentResult: AgentChatResult = {
+        message: finalMessage,
+        toolCallsUsed,
+        toolCalls: toolCallsLog,
+      };
+
+      if (onEvent) {
+        onEvent({
+          type: "final_message",
+          message: agentResult.message,
+          toolCallsUsed: agentResult.toolCallsUsed,
+          toolCalls: agentResult.toolCalls,
+        });
+      }
+
+      return agentResult;
+    } finally {
+      await closeMcp();
+    }
   }
 }

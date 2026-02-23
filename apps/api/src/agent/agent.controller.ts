@@ -10,20 +10,7 @@ export class AgentController {
   async listTools(): Promise<{
     tools: { name: string; description?: string }[];
   }> {
-    const openaiTools = await this.agent.getMcpToolsAsOpenAI();
-    const tools = openaiTools
-      .filter(
-        (
-          t
-        ): t is {
-          type: "function";
-          function: { name: string; description?: string };
-        } => t.type === "function"
-      )
-      .map((t) => ({
-        name: t.function.name,
-        description: t.function.description,
-      }));
+    const tools = await this.agent.getMcpToolsList();
     return { tools };
   }
 

@@ -1,5 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { McpServerConfig } from "./dto/mcp-server.dto.js";
 import type { McpToolInfo } from "./dto/mcp-server.dto.js";
 
@@ -16,176 +16,225 @@ export interface CallToolResult {
   isError?: boolean;
 }
 
-function toEnvRecord(
-  env: Record<string, string | undefined> | undefined
-): Record<string, string> | undefined {
-  if (!env) return undefined;
-  return Object.fromEntries(
-    Object.entries(env).filter(([, v]) => v !== undefined)
-  ) as Record<string, string>;
+/** 서버 집합에 대한 풀 키 (동일 설정 = 동일 연결 재사용) */
+function getPoolKey(servers: McpServerConfig[]): string {
+  const normalized = [...servers]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((s) => ({
+      id: s.id,
+      command: s.command,
+      args: s.args ?? [],
+      env: s.env ?? {},
+    }));
+  return JSON.stringify(normalized);
 }
 
 /**
- * MCP 연결 풀 - 브라우저 인스턴스가 재시작되지 않도록 연결을 재사용
+ * Adapter 클라이언트 연결 풀 - 동일 서버 집합이면 연결 재사용, 유휴 시 정리
  */
-class McpConnectionPool {
-  private connections = new Map<
+class McpAdapterConnectionPool {
+  private pool = new Map<
     string,
-    { client: Client; transport: StdioClientTransport; lastUsed: number }
+    {
+      client: MultiServerMCPClient;
+      tools: StructuredToolInterface[];
+      lastUsed: number;
+    }
   >();
-  private readonly MAX_IDLE_TIME = 5 * 60 * 1000; // 5분
+  private readonly MAX_IDLE_MS = 5 * 60 * 1000; // 5분
 
-  private getConnectionKey(config: McpServerConfig): string {
-    return `${config.command}:${JSON.stringify(
-      config.args || []
-    )}:${JSON.stringify(config.env || {})}`;
-  }
+  async get(
+    servers: McpServerConfig[]
+  ): Promise<{ tools: StructuredToolInterface[]; release: () => void }> {
+    const key = getPoolKey(servers);
+    let entry = this.pool.get(key);
 
-  async getConnection(
-    config: McpServerConfig
-  ): Promise<{ client: Client; transport: StdioClientTransport }> {
-    const key = this.getConnectionKey(config);
-    let conn = this.connections.get(key);
-
-    // 기존 연결이 있고 유효하면 재사용
-    if (conn) {
-      conn.lastUsed = Date.now();
-      return { client: conn.client, transport: conn.transport };
+    if (entry) {
+      entry.lastUsed = Date.now();
+      return {
+        tools: entry.tools,
+        release: () => {
+          entry!.lastUsed = Date.now();
+        },
+      };
     }
 
-    // 새 연결 생성
-    const env = config.env
-      ? toEnvRecord({ ...process.env, ...config.env })
-      : undefined;
-    const transport = new StdioClientTransport({
-      command: config.command,
-      args: config.args,
-      env,
+    const mcpServers = buildMcpServersRecord(servers);
+    const client = new MultiServerMCPClient({
+      mcpServers,
+      useStandardContentBlocks: true,
+      onConnectionError: "ignore",
     });
-    const client = new Client({ name: "magicclaw", version: "0.1.0" });
-    await client.connect(transport);
+    const tools = await client.getTools();
+    entry = { client, tools, lastUsed: Date.now() };
+    this.pool.set(key, entry);
 
-    this.connections.set(key, { client, transport, lastUsed: Date.now() });
-    return { client, transport };
+    return {
+      tools: entry.tools,
+      release: () => {
+        entry!.lastUsed = Date.now();
+      },
+    };
   }
 
-  async releaseConnection(config: McpServerConfig): Promise<void> {
-    // 연결을 풀에 유지 (종료하지 않음)
-    const key = this.getConnectionKey(config);
-    const conn = this.connections.get(key);
-    if (conn) {
-      conn.lastUsed = Date.now();
-    }
-  }
-
-  async closeConnection(config: McpServerConfig): Promise<void> {
-    const key = this.getConnectionKey(config);
-    const conn = this.connections.get(key);
-    if (conn) {
+  close(key: string): void {
+    const entry = this.pool.get(key);
+    if (entry) {
       try {
-        conn.client.close();
-      } catch (err) {
-        // 연결 종료 중 오류 무시
+        entry.client.close();
+      } catch {
+        // 무시
       }
-      this.connections.delete(key);
+      this.pool.delete(key);
     }
   }
 
-  // 유휴 연결 정리
   cleanupIdleConnections(): void {
     const now = Date.now();
-    for (const [key, conn] of this.connections.entries()) {
-      if (now - conn.lastUsed > this.MAX_IDLE_TIME) {
+    for (const [key, entry] of this.pool.entries()) {
+      if (now - entry.lastUsed > this.MAX_IDLE_MS) {
         try {
-          conn.client.close();
-        } catch (err) {
-          // 연결 종료 중 오류 무시
+          entry.client.close();
+        } catch {
+          // 무시
         }
-        this.connections.delete(key);
+        this.pool.delete(key);
       }
     }
   }
 }
 
-const connectionPool = new McpConnectionPool();
+const adapterPool = new McpAdapterConnectionPool();
 
-// 주기적으로 유휴 연결 정리 (1분마다)
 if (typeof setInterval !== "undefined") {
-  setInterval(() => {
-    connectionPool.cleanupIdleConnections();
-  }, 60000);
+  setInterval(() => adapterPool.cleanupIdleConnections(), 60000);
+}
+
+function langChainToolsToMcpToolInfo(
+  tools: StructuredToolInterface[]
+): McpToolInfo[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: typeof t.description === "string" ? t.description : undefined,
+    inputSchema:
+      typeof (t as { schema?: unknown }).schema === "object"
+        ? ((t as { schema: Record<string, unknown> }).schema as Record<
+            string,
+            unknown
+          >)
+        : undefined,
+  }));
+}
+
+function buildMcpServersRecord(servers: McpServerConfig[]): Record<
+  string,
+  {
+    transport: "stdio";
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  }
+> {
+  const mcpServers: Record<
+    string,
+    {
+      transport: "stdio";
+      command: string;
+      args: string[];
+      env?: Record<string, string>;
+    }
+  > = {};
+  for (const s of servers) {
+    mcpServers[s.id] = {
+      transport: "stdio",
+      command: s.command,
+      args: s.args ?? [],
+      ...(s.env && Object.keys(s.env).length > 0 && { env: s.env }),
+    };
+  }
+  return mcpServers;
 }
 
 /**
- * List tools from an MCP server (stdio). Uses connection pooling to reuse browser instances.
+ * List tools from an MCP server using @langchain/mcp-adapters.
  */
 export async function listToolsFromMcpServer(
   config: McpServerConfig
 ): Promise<ListToolsResult> {
-  const { client } = await connectionPool.getConnection(config);
   try {
-    const result = await client.listTools();
-    const tools: McpToolInfo[] = (result.tools ?? []).map((t) => ({
-      name: t.name,
-      description: t.description ?? undefined,
-      inputSchema: t.inputSchema as Record<string, unknown> | undefined,
-    }));
-    return { tools };
+    const { tools, close } = await getMcpToolsAsLangChain([config]);
+    await close();
+    return {
+      tools: langChainToolsToMcpToolInfo(tools),
+    };
   } catch (err) {
     return {
       tools: [],
       error: err instanceof Error ? err.message : String(err),
     };
-  } finally {
-    // 연결을 종료하지 않고 풀에 반환
-    await connectionPool.releaseConnection(config);
   }
 }
 
 /**
- * Call a tool via MCP client. Uses connection pooling to reuse browser instances.
+ * Call a tool via @langchain/mcp-adapters (single server).
  */
 export async function callMcpTool(
   config: McpServerConfig,
   toolName: string,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
-  const { client } = await connectionPool.getConnection(config);
+  const { tools, close } = await getMcpToolsAsLangChain([config]);
   try {
-    const result = await client.callTool({ name: toolName, arguments: args });
-    const rawContent = (result.content ?? []) as Array<{
-      type: string;
-      text?: string;
-      data?: string;
-      mimeType?: string;
-    }>;
-    const content = rawContent.map((c) => {
-      if (c.type === "text")
-        return { type: "text" as const, text: c.text ?? "" };
-      if (c.type === "image")
-        return {
-          type: "image" as const,
-          data: c.data ?? "",
-          mimeType: c.mimeType,
-        };
-      return { type: "text" as const, text: JSON.stringify(c) };
-    });
+    const tool = tools.find((t) => t.name === toolName);
+    if (!tool) {
+      return {
+        content: [
+          { type: "text" as const, text: `Tool "${toolName}" not found` },
+        ],
+        isError: true,
+      };
+    }
+    const result = await tool.invoke(args);
+    const text =
+      typeof result === "string"
+        ? result
+        : typeof result === "object" && result !== null && "content" in result
+        ? String((result as { content: unknown }).content)
+        : JSON.stringify(result);
     return {
-      content,
-      isError: Boolean(result.isError),
+      content: [{ type: "text" as const, text }],
+      isError: false,
     };
   } catch (err) {
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: err instanceof Error ? err.message : String(err),
         },
       ],
       isError: true,
     };
   } finally {
-    // 연결을 종료하지 않고 풀에 반환
-    await connectionPool.releaseConnection(config);
+    await close();
   }
+}
+
+/** @langchain/mcp-adapters로 MCP 서버 연결 후 LangChain 도구 반환. close() 시 연결은 풀에 반환(재사용). */
+export async function getMcpToolsAsLangChain(
+  servers: McpServerConfig[]
+): Promise<{
+  tools: StructuredToolInterface[];
+  close: () => Promise<void>;
+}> {
+  if (servers.length === 0) {
+    return { tools: [], close: async () => {} };
+  }
+  const { tools, release } = await adapterPool.get(servers);
+  return {
+    tools,
+    close: async () => {
+      release();
+    },
+  };
 }
