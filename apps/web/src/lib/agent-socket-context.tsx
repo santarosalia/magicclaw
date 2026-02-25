@@ -1,6 +1,6 @@
 "use client";
 
-import { ToolCall } from "langchain";
+import { ToolCall, ToolMessage } from "langchain";
 import {
   createContext,
   useCallback,
@@ -18,9 +18,8 @@ export type AgentSocketEvent =
       toolCall: ToolCall;
     }
   | {
-      type: "tool_result";
-      name: string;
-      output: string;
+      type: "tool_message";
+      toolMessage: ToolMessage;
     }
   | {
       type: "assistant_message";

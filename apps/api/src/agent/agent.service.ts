@@ -76,6 +76,10 @@ export type AgentEvent =
       content: string;
     }
   | {
+      type: "tool_message";
+      toolMessage: ToolMessage;
+    }
+  | {
       type: "final_message";
       message: string;
       toolCallsUsed: number;
@@ -147,7 +151,8 @@ function processResultMessages(
     }
 
     if (msg instanceof ToolMessage) {
-      console.log("ToolMessage", msg);
+      if (opts?.onEvent)
+        opts.onEvent({ type: "tool_message", toolMessage: msg });
     }
   }
   if (!finalMessage && messages.length > 0) {

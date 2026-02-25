@@ -11,7 +11,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import { ToolCallFlow } from "@/components/ToolCallFlow";
-import { ToolCall } from "langchain";
+import { ToolCall, ToolMessage } from "langchain";
 import { useAgentSocket } from "@/lib/useAgentSocket";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -22,6 +22,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   /** 채팅 중 발생한 tool call 목록 캐시 → React Flow로 렌더 */
   const [toolCallsCache, setToolCallsCache] = useState<ToolCall[]>([]);
+  const [toolMessagesCache, setToolMessagesCache] = useState<ToolMessage[]>([]);
   const { connecting, connected, events, sendChat } = useAgentSocket();
 
   const lastEventIndexRef = useRef(0);
@@ -58,10 +59,16 @@ export default function ChatPage() {
     let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
-      if (ev.type === "tool_call") {
-        newToolCalls.push(ev.toolCall as ToolCall);
-      } else if (ev.type === "final_message") {
-        finalMessage = ev.message;
+      switch (ev.type) {
+        case "tool_call":
+          newToolCalls.push(ev.toolCall as ToolCall);
+          break;
+        case "tool_message":
+          setToolMessagesCache((prev) => [...prev, ev.toolMessage]);
+          break;
+        case "final_message":
+          finalMessage = ev.message;
+          break;
       }
     }
 
