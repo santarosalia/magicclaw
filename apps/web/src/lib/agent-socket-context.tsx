@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolCall } from "langchain";
 import {
   createContext,
   useCallback,
@@ -14,8 +15,7 @@ import { io, type Socket } from "socket.io-client";
 export type AgentSocketEvent =
   | {
       type: "tool_call";
-      name: string;
-      args: Record<string, unknown>;
+      toolCall: ToolCall;
     }
   | {
       type: "tool_result";

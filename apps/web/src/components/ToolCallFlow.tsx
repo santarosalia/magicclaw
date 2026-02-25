@@ -16,11 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Play, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-export interface ToolCallEntry {
-  name: string;
-  args: Record<string, unknown>;
-}
+import { ToolCall } from "langchain";
 
 const NODE_HEIGHT = 80;
 const GAP = 24;
@@ -93,7 +89,7 @@ function ToolCallNode({
 const nodeTypes: NodeTypes = { toolCall: ToolCallNode };
 
 function buildFlow(
-  toolCalls: ToolCallEntry[],
+  toolCalls: ToolCall[],
   onRun?: (nodeIndex: number) => void,
   runningNodeIndex?: number
 ): {
@@ -139,7 +135,7 @@ function buildFlow(
 }
 
 interface ToolCallFlowProps {
-  toolCalls: ToolCallEntry[];
+  toolCalls: ToolCall[];
   className?: string;
 }
 
@@ -150,7 +146,7 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
   const [isRunningAll, setIsRunningAll] = useState(false);
 
   const executeFlow = useCallback(
-    async (toolCallsToRun: ToolCallEntry[], startIndex: number = 0) => {
+    async (toolCallsToRun: ToolCall[], startIndex: number = 0) => {
       // 노드와 엣지 생성
       const nodes = toolCallsToRun.map((tc, i) => {
         const globalIndex = startIndex + i;

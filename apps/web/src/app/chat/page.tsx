@@ -10,7 +10,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
-import { ToolCallFlow, type ToolCallEntry } from "@/components/ToolCallFlow";
+import { ToolCallFlow } from "@/components/ToolCallFlow";
+import { ToolCall } from "langchain";
 import { useAgentSocket } from "@/lib/useAgentSocket";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -19,8 +20,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  /** 채팅 중 발생한 tool call 목록 (이름 + args) 캐시 → React Flow로 렌더 */
-  const [toolCallsCache, setToolCallsCache] = useState<ToolCallEntry[]>([]);
+  /** 채팅 중 발생한 tool call 목록 캐시 → React Flow로 렌더 */
+  const [toolCallsCache, setToolCallsCache] = useState<ToolCall[]>([]);
   const { connecting, connected, events, sendChat } = useAgentSocket();
 
   const lastEventIndexRef = useRef(0);
@@ -53,12 +54,12 @@ export default function ChatPage() {
     const newEvents = events.slice(startIndex);
     lastEventIndexRef.current = events.length;
 
-    const newToolCalls: ToolCallEntry[] = [];
+    const newToolCalls: ToolCall[] = [];
     let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
       if (ev.type === "tool_call") {
-        newToolCalls.push({ name: ev.name, args: ev.args });
+        newToolCalls.push(ev.toolCall as ToolCall);
       } else if (ev.type === "final_message") {
         finalMessage = ev.message;
       }
