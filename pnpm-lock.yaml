@@ -25,9 +25,6 @@ importers:
       '@langchain/tavily':
         specifier: ^1.2.0
         version: 1.2.0(@langchain/core@1.1.27(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76)))
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.26.0
-        version: 1.26.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       '@nestjs/common':
         specifier: ^11.0.0
         version: 11.1.14(reflect-metadata@0.2.2)(rxjs@7.8.2)

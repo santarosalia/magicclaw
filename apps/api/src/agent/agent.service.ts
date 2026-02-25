@@ -26,7 +26,10 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 function parsePlanSteps(planText: string): string[] {
   const trimmed = planText.trim();
   if (!trimmed) return [];
-  const lines = trimmed.split(/\n/).map((s) => s.trim()).filter(Boolean);
+  const lines = trimmed
+    .split(/\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const steps = lines.map((line) =>
     line.replace(/^\s*(\d+[.)]\s*|[\-\*]\s+)/i, "").trim()
   );
@@ -232,7 +235,9 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const response = await llm.invoke(withSystem);
       const text = getMessageContentAsString(response).trim().toUpperCase();
       const isMultiStep =
-        text.includes("MULTI") || text === "MULTI_STEP" || text.startsWith("MULTI");
+        text.includes("MULTI") ||
+        text === "MULTI_STEP" ||
+        text.startsWith("MULTI");
       return { isMultiStep };
     };
 
@@ -244,7 +249,8 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         ...state.messages,
       ];
       const response = await llm.invoke(withSystem);
-      const planText = getMessageContentAsString(response).trim() || "(No plan)";
+      const planText =
+        getMessageContentAsString(response).trim() || "(No plan)";
       const planSteps = parsePlanSteps(planText);
       const planDisplay =
         planSteps.length > 0
@@ -278,13 +284,16 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const steps = state.planSteps ?? [];
       const idx = state.currentStepIndex ?? 0;
       const currentStep = steps[idx]?.trim() || "(Complete the task.)";
-      const stepSection = `\n\nExecute ONLY this step (step ${idx + 1} of ${steps.length || 1}): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`;
+      const stepSection = `\n\nExecute ONLY this step (step ${idx + 1} of ${
+        steps.length || 1
+      }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`;
       const withSystem = [
         new SystemMessage({
           content: systemPrompt + stepSection,
         }),
         ...state.messages,
       ];
+      console.log(withSystem);
       const response = await llmWithTools.invoke(withSystem);
       return { messages: [response] };
     };
@@ -296,7 +305,12 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
     const hasToolCalls = (state: PlanState) => {
       const messages = state.messages ?? [];
       const last = messages[messages.length - 1];
-      return !!(last && "tool_calls" in last && Array.isArray(last.tool_calls) && last.tool_calls.length > 0);
+      return !!(
+        last &&
+        "tool_calls" in last &&
+        Array.isArray(last.tool_calls) &&
+        last.tool_calls.length > 0
+      );
     };
 
     const routeFromRouter = (state: PlanState): "planner" | "agent_direct" =>
@@ -326,11 +340,20 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       .addNode("tools", toolNode)
       .addNode("step_done", stepDoneNode)
       .addEdge(START, "router")
-      .addConditionalEdges("router", routeFromRouter, ["planner", "agent_direct"])
+      .addConditionalEdges("router", routeFromRouter, [
+        "planner",
+        "agent_direct",
+      ])
       .addEdge("planner", "agent")
-      .addConditionalEdges("agent_direct", agentDirectToToolsOrEnd, ["tools", END])
+      .addConditionalEdges("agent_direct", agentDirectToToolsOrEnd, [
+        "tools",
+        END,
+      ])
       .addConditionalEdges("tools", routeFromTools, ["agent", "agent_direct"])
-      .addConditionalEdges("agent", agentToToolsOrStepDone, ["tools", "step_done"])
+      .addConditionalEdges("agent", agentToToolsOrStepDone, [
+        "tools",
+        "step_done",
+      ])
       .addConditionalEdges("step_done", routeAfterStep, ["agent", END]);
     return builder.compile();
   }
@@ -429,6 +452,7 @@ Reply in the same language as the user when appropriate.`;
         toolCallsUsed,
         finalMessage: rawFinal,
       } = processResultMessages(resultMessages);
+
       const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
 
       const agentResult: AgentChatResult = {
