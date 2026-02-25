@@ -7,12 +7,6 @@ import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
 import { ChatOpenAI } from "@langchain/openai";
 import {
-  HumanMessage,
-  AIMessage,
-  SystemMessage,
-  type BaseMessage,
-} from "@langchain/core/messages";
-import {
   StateGraph,
   Annotation,
   messagesStateReducer,
@@ -21,6 +15,14 @@ import {
 } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import {
+  ToolMessage,
+  SystemMessage,
+  AIMessage,
+  HumanMessage,
+  BaseMessage,
+  ToolCall,
+} from "langchain";
 
 /** 플랜 텍스트를 번호/불릿 기준으로 단계 배열로 파싱. */
 function parsePlanSteps(planText: string): string[] {
@@ -62,8 +64,7 @@ export type AgentEvent =
   | { type: "plan"; content: string }
   | {
       type: "tool_call";
-      name: string;
-      args: Record<string, unknown>;
+      toolCall: ToolCall;
     }
   | {
       type: "tool_result";
@@ -78,18 +79,13 @@ export type AgentEvent =
       type: "final_message";
       message: string;
       toolCallsUsed: number;
-      toolCalls: ToolCallEntry[];
+      toolCalls: ToolCall[];
     };
-
-export interface ToolCallEntry {
-  name: string;
-  args: Record<string, unknown>;
-}
 
 export interface AgentChatResult {
   message: string;
   toolCallsUsed: number;
-  toolCalls: ToolCallEntry[];
+  toolCalls: ToolCall[];
 }
 
 /** ChatMessage[] → LangChain BaseMessage[] (API 입력을 그래프 state 형식으로). */
@@ -119,11 +115,11 @@ function processResultMessages(
   messages: BaseMessage[],
   opts?: { onEvent?: (event: AgentEvent) => void; startIndex?: number }
 ): {
-  toolCallsLog: ToolCallEntry[];
+  toolCallsLog: ToolCall[];
   toolCallsUsed: number;
   finalMessage: string;
 } {
-  const toolCallsLog: ToolCallEntry[] = [];
+  const toolCallsLog: ToolCall[] = [];
   let toolCallsUsed = 0;
   let finalMessage = "";
   const start = opts?.startIndex ?? 0;
@@ -134,27 +130,24 @@ function processResultMessages(
       if (content && opts?.onEvent)
         opts.onEvent({ type: "assistant_message", content });
       const toolCalls = msg.tool_calls ?? [];
+
       for (let j = 0; j < toolCalls.length; j++) {
-        const tc = toolCalls[j];
-        const name = tc.name ?? "";
-        const args = (tc.args ?? {}) as Record<string, unknown>;
-        toolCallsLog.push({ name, args });
+        const toolCall = toolCalls[j] as ToolCall;
+
+        toolCallsLog.push(toolCall);
         toolCallsUsed++;
-        if (opts?.onEvent && name)
-          opts.onEvent({ type: "tool_call", name, args });
-        const toolMsg = messages[i + 1 + j];
-        const output =
-          toolMsg && "content" in toolMsg
-            ? getMessageContentAsString(toolMsg as BaseMessage)
-            : "";
-        if (opts?.onEvent && name)
-          opts.onEvent({ type: "tool_result", name, output });
+        if (opts?.onEvent) opts.onEvent({ type: "tool_call", toolCall });
       }
+
       if (toolCalls.length > 0) {
         i += toolCalls.length - 1;
       } else if (content) {
         finalMessage = content;
       }
+    }
+
+    if (msg instanceof ToolMessage) {
+      console.log("ToolMessage", msg);
     }
   }
   if (!finalMessage && messages.length > 0) {
