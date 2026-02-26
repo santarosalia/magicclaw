@@ -140,7 +140,9 @@ function processResultMessages(
 
         toolCallsLog.push(toolCall);
         toolCallsUsed++;
-        if (opts?.onEvent) opts.onEvent({ type: "tool_call", toolCall });
+        if (opts?.onEvent && !toolCall.error) {
+          opts.onEvent({ type: "tool_call", toolCall });
+        }
       }
 
       if (toolCalls.length > 0) {
@@ -286,13 +288,14 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const stepSection = `\n\nExecute ONLY this step (step ${idx + 1} of ${
         steps.length || 1
       }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`;
+
       const withSystem = [
         new SystemMessage({
           content: systemPrompt + stepSection,
         }),
         ...state.messages,
       ];
-      console.log(withSystem);
+
       const response = await llmWithTools.invoke(withSystem);
       return { messages: [response] };
     };
@@ -354,7 +357,13 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         "step_done",
       ])
       .addConditionalEdges("step_done", routeAfterStep, ["agent", END]);
-    return builder.compile();
+
+    const graph = builder.compile();
+    // graph.getGraphAsync().then((g) => {
+    //   const mermaid = g.drawMermaid();
+    //   console.log(mermaid);
+    // });
+    return graph;
   }
 
   async chat(

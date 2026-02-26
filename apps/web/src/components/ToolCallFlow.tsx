@@ -60,11 +60,11 @@ function ToolCallNode({
               {data.argsSummary}
             </pre>
           )}
-          {data.toolMessage && (
+          {/* {data.toolMessage && (
             <div className="text-xs text-violet-300/90">
               {data.toolMessage.content as string}
             </div>
-          )}
+          )} */}
         </div>
         {data.onRun && (
           <Button
