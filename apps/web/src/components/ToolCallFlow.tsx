@@ -5,7 +5,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   type Node,
   type Edge,
   type NodeTypes,
@@ -16,7 +15,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Play, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ToolCall } from "langchain";
+import { ToolCall, ToolMessage } from "langchain";
+import { useToolCallStore } from "@/stores/tool-call-store";
 
 const NODE_HEIGHT = 80;
 const GAP = 24;
@@ -27,6 +27,7 @@ type ToolCallNodeData = {
   args: Record<string, unknown>;
   onRun?: (nodeIndex: number) => void;
   isRunning?: boolean;
+  toolMessage: ToolMessage;
 };
 
 function ToolCallNode({
@@ -59,6 +60,11 @@ function ToolCallNode({
               {data.argsSummary}
             </pre>
           )}
+          {data.toolMessage && (
+            <div className="text-xs text-violet-300/90">
+              {data.toolMessage.content as string}
+            </div>
+          )}
         </div>
         {data.onRun && (
           <Button
@@ -90,6 +96,7 @@ const nodeTypes: NodeTypes = { toolCall: ToolCallNode };
 
 function buildFlow(
   toolCalls: ToolCall[],
+  toolMessages: ToolMessage[],
   onRun?: (nodeIndex: number) => void,
   runningNodeIndex?: number
 ): {
@@ -112,6 +119,7 @@ function buildFlow(
         name: tc.name,
         argsSummary: argsStr,
         args: tc.args,
+        toolMessage: toolMessages.find((tm) => tm.tool_call_id === tc.id),
         onRun,
         isRunning: runningNodeIndex === i,
       },
@@ -135,14 +143,15 @@ function buildFlow(
 }
 
 interface ToolCallFlowProps {
-  toolCalls: ToolCall[];
   className?: string;
 }
 
-export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
+export function ToolCallFlow({ className }: ToolCallFlowProps) {
   const [runningNodeIndex, setRunningNodeIndex] = useState<
     number | undefined
   >();
+
+  const { toolMessages, toolCalls } = useToolCallStore();
   const [isRunningAll, setIsRunningAll] = useState(false);
 
   const executeFlow = useCallback(
@@ -161,6 +170,7 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
               ? JSON.stringify(tc.args).slice(0, 80) +
                 (JSON.stringify(tc.args).length > 80 ? "…" : "")
               : "",
+            toolMessage: toolMessages.find((tm) => tm.tool_call_id === tc.id),
           },
         };
       });
@@ -234,8 +244,8 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
   }, [toolCalls, executeFlow]);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlow(toolCalls, handleRun, runningNodeIndex),
-    [toolCalls, handleRun, runningNodeIndex]
+    () => buildFlow(toolCalls, toolMessages, handleRun, runningNodeIndex),
+    [toolCalls, toolMessages, handleRun, runningNodeIndex]
   );
 
   const onInit = useCallback((_: unknown) => {
@@ -292,10 +302,6 @@ export function ToolCallFlow({ toolCalls, className }: ToolCallFlowProps) {
         >
           <Background color="rgba(139, 92, 246, 0.15)" gap={12} />
           <Controls showInteractive={false} />
-          {/* <MiniMap
-          nodeColor={(n) => "rgba(139, 92, 246, 0.6)"}
-          maskColor="rgba(0,0,0,0.7)"
-        /> */}
         </ReactFlow>
       </div>
     </div>

@@ -11,8 +11,10 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import { ToolCallFlow } from "@/components/ToolCallFlow";
-import { ToolCall, ToolMessage } from "langchain";
+import { useToolCallStore } from "@/stores/tool-call-store";
 import { useAgentSocket } from "@/lib/useAgentSocket";
+import type { ToolCall, ToolMessage } from "langchain";
+import { load } from "@langchain/core/load";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -20,9 +22,11 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  /** 채팅 중 발생한 tool call 목록 캐시 → React Flow로 렌더 */
-  const [toolCallsCache, setToolCallsCache] = useState<ToolCall[]>([]);
-  const [toolMessagesCache, setToolMessagesCache] = useState<ToolMessage[]>([]);
+  const {
+    addToolCalls,
+    addToolMessage,
+    reset: resetToolCallStore,
+  } = useToolCallStore();
   const { connecting, connected, events, sendChat } = useAgentSocket();
 
   const lastEventIndexRef = useRef(0);
@@ -64,7 +68,9 @@ export default function ChatPage() {
           newToolCalls.push(ev.toolCall as ToolCall);
           break;
         case "tool_message":
-          setToolMessagesCache((prev) => [...prev, ev.toolMessage]);
+          load<ToolMessage>(JSON.stringify(ev.toolMessage)).then((tm) =>
+            addToolMessage(tm)
+          );
           break;
         case "final_message":
           finalMessage = ev.message;
@@ -73,7 +79,7 @@ export default function ChatPage() {
     }
 
     if (newToolCalls.length) {
-      setToolCallsCache((prev) => [...prev, ...newToolCalls]);
+      addToolCalls(newToolCalls);
     }
 
     if (finalMessage != null) {
@@ -107,7 +113,7 @@ export default function ChatPage() {
       ]);
       setLoading(false);
     }
-  }, [input, loading, messages, sendChat]);
+  }, [input, loading, messages, sendChat, resetToolCallStore]);
 
   return (
     <main className="h-screen flex flex-col p-6">
@@ -231,10 +237,7 @@ export default function ChatPage() {
 
         <Card className="overflow-hidden flex-1 h-full">
           <CardContent className="p-2 h-full flex flex-col">
-            <ToolCallFlow
-              toolCalls={toolCallsCache}
-              className="w-full rounded-md flex-1"
-            />
+            <ToolCallFlow className="w-full rounded-md flex-1" />
           </CardContent>
         </Card>
       </div>

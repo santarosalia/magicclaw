@@ -151,8 +151,9 @@ function processResultMessages(
     }
 
     if (msg instanceof ToolMessage) {
-      if (opts?.onEvent)
+      if (opts?.onEvent) {
         opts.onEvent({ type: "tool_message", toolMessage: msg });
+      }
     }
   }
   if (!finalMessage && messages.length > 0) {
