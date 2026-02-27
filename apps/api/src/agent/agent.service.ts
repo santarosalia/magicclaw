@@ -374,19 +374,48 @@ Reply in the same language as the user when appropriate.`;
         messages: messagesLc,
       };
 
-      const resultMessages: BaseMessage[] = [];
+      let resultMessages: BaseMessage[] = [];
 
       if (onEvent) {
         const stream = await graph.stream(initialState, {
           streamMode: ["updates", "messages", "values"],
           recursionLimit: 100,
         });
+        const onToolCall = (messages: BaseMessage[]) => {
+          for (const message of messages) {
+            if (message instanceof AIMessageChunk && message.tool_calls) {
+              const toolCalls = message.tool_calls;
+              if (toolCalls) {
+                for (const toolCall of toolCalls) {
+                  console.log("툴콜 이벤트 발생");
+                  onEvent({
+                    type: "tool_call",
+                    toolCall: toolCall as ToolCall,
+                  });
+                }
+              }
+            }
+          }
+        };
 
         for await (const [kind, data] of stream) {
           switch (kind) {
             case "values":
+              resultMessages = data.messages;
               break;
             case "updates":
+              if (data.agent) {
+                onToolCall(data.agent?.messages);
+              }
+              if (data.agent_direct) {
+                onToolCall(data.agent_direct?.messages);
+              }
+              if (data.tools) {
+                const messages = data.tools?.messages as ToolMessage[];
+                for (const message of messages) {
+                  onEvent({ type: "tool_message", toolMessage: message });
+                }
+              }
               break;
             case "messages":
               const [token, metadata] = data;
@@ -413,46 +442,6 @@ Reply in the same language as the user when appropriate.`;
               break;
           }
         }
-
-        // for await (const chunk of stream) {
-        //   const chunkMessages = chunk.messages ?? [];
-        //   // 플랜 이벤트: planner 노드 이후 planSteps 있을 때 한 번만 발송
-        //   if (
-        //     !planEmitted &&
-        //     Array.isArray(chunk.planSteps) &&
-        //     chunk.planSteps.length > 0
-        //   ) {
-        //     onEvent({
-        //       type: "plan",
-        //       content: chunk.planSteps
-        //         .map((s, i) => `${i + 1}. ${s}`)
-        //         .join("\n"),
-        //     });
-        //     planEmitted = true;
-        //   }
-        //   // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
-        //   const lastMsg = chunkMessages[chunkMessages.length - 1];
-        //   if (lastMsg instanceof AIMessage) {
-        //     const content = getMessageContentAsString(lastMsg);
-        //     if (content.length > lastEmittedContentLength) {
-        //       onEvent({
-        //         type: "assistant_message",
-        //         content: content.slice(lastEmittedContentLength),
-        //       });
-        //       lastEmittedContentLength = content.length;
-        //     }
-        //   } else {
-        //     lastEmittedContentLength = 0;
-        //   }
-        //   processResultMessages(chunkMessages, {
-        //     onEvent: (e) => {
-        //       if (e.type !== "assistant_message") onEvent(e);
-        //     },
-        //     startIndex: prevLen,
-        //   });
-        //   prevLen = chunkMessages.length;
-        //   resultMessages = chunkMessages;
-        // }
       }
       return resultMessages;
     } finally {
