@@ -32,13 +32,12 @@ export type AgentSocketEvent =
       toolCalls: { name: string; args: Record<string, unknown> }[];
     };
 
-type ChatMessage = { role: string; content: string };
-
 interface AgentSocketValue {
   connecting: boolean;
   connected: boolean;
   events: AgentSocketEvent[];
-  sendChat: (messages: ChatMessage[]) => void;
+  /** 현재 사용자 입력 한 줄만 전송. 히스토리는 백엔드 세션에서 관리. */
+  sendChat: (userMessage: string, model?: string) => void;
 }
 
 const AgentSocketContext = createContext<AgentSocketValue | null>(null);
@@ -80,10 +79,10 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const sendChat = useCallback((messages: ChatMessage[]) => {
+  const sendChat = useCallback((userMessage: string, model?: string) => {
     if (!socketRef.current) return;
     setEvents([]);
-    socketRef.current.emit("chat", { messages });
+    socketRef.current.emit("chat", { userMessage, model });
   }, []);
 
   return (

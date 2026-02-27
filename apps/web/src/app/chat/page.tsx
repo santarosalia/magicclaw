@@ -99,9 +99,8 @@ export default function ChatPage() {
     setLoading(true);
     lastEventIndexRef.current = 0;
     try {
-      // 소켓을 통해 스트리밍 채팅 요청
-      const nextMessages = [...messages, { role: "user", content: text }];
-      sendChat(nextMessages);
+      // 소켓으로 사용자 메시지만 전송 (히스토리는 백엔드 세션에서 관리)
+      sendChat(text);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -113,7 +112,7 @@ export default function ChatPage() {
       ]);
       setLoading(false);
     }
-  }, [input, loading, messages, sendChat, resetToolCallStore]);
+  }, [input, loading, sendChat]);
 
   return (
     <main className="h-screen flex flex-col p-6">

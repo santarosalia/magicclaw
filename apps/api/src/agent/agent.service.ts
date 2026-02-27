@@ -56,8 +56,7 @@ export interface ChatMessage {
 }
 
 export interface AgentChatOptions {
-  messages: ChatMessage[];
-  model?: string;
+  messagesLc: BaseMessage[];
 }
 
 export type AgentEvent =
@@ -85,21 +84,6 @@ export type AgentEvent =
       toolCallsUsed: number;
       toolCalls: ToolCall[];
     };
-
-export interface AgentChatResult {
-  message: string;
-  toolCallsUsed: number;
-  toolCalls: ToolCall[];
-}
-
-/** ChatMessage[] → LangChain BaseMessage[] (API 입력을 그래프 state 형식으로). */
-function chatMessagesToLangChain(messages: ChatMessage[]): BaseMessage[] {
-  return messages.map((m) => {
-    if (m.role === "system") return new SystemMessage({ content: m.content });
-    if (m.role === "user") return new HumanMessage({ content: m.content });
-    return new AIMessage({ content: m.content });
-  });
-}
 
 /** BaseMessage content를 string으로 추출 (string | MessageContentBlock[] 지원). */
 function getMessageContentAsString(msg: BaseMessage): string {
@@ -369,12 +353,12 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
   async chat(
     options: AgentChatOptions,
     onEvent?: (event: AgentEvent) => void
-  ): Promise<AgentChatResult> {
+  ): Promise<BaseMessage[]> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
-    const { messages, model = defaultModel } = options;
-
-    const llm = this.getLangChainModel(model);
+    const { messagesLc } = options;
+    console.log(messagesLc);
+    const llm = this.getLangChainModel(defaultModel);
     const { tools, close: closeMcp } = await this.getMcpToolsAsLangChain();
 
     try {
@@ -385,9 +369,8 @@ Reply in the same language as the user when appropriate.`;
 
       const graph = this.buildAgentGraph(llm, tools, systemPrompt);
 
-      const lcMessages = chatMessagesToLangChain(messages);
       const initialState: { messages: BaseMessage[] } = {
-        messages: lcMessages,
+        messages: messagesLc,
       };
 
       let resultMessages: BaseMessage[] = [];
@@ -463,22 +446,16 @@ Reply in the same language as the user when appropriate.`;
 
       const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
 
-      const agentResult: AgentChatResult = {
-        message: finalMessage,
-        toolCallsUsed,
-        toolCalls: toolCallsLog,
-      };
-
       if (onEvent) {
         onEvent({
           type: "final_message",
-          message: agentResult.message,
-          toolCallsUsed: agentResult.toolCallsUsed,
-          toolCalls: agentResult.toolCalls,
+          message: finalMessage,
+          toolCallsUsed,
+          toolCalls: toolCallsLog,
         });
       }
 
-      return agentResult;
+      return resultMessages;
     } finally {
       await closeMcp();
     }
