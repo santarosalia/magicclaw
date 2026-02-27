@@ -61,6 +61,7 @@ export class AgentGateway implements OnGatewayDisconnect {
     this.session.append(client.id, ...newMessages);
     onEvent({
       type: "final_message",
+      message: newMessages[newMessages.length - 1].content as string,
     });
   }
 }

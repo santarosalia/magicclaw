@@ -51,8 +51,6 @@ export default function ChatPage() {
     if (!events.length) return;
 
     const startIndex = lastEventIndexRef.current;
-    if (startIndex >= events.length) return;
-
     const newEvents = events.slice(startIndex);
     lastEventIndexRef.current = events.length;
 
@@ -70,6 +68,13 @@ export default function ChatPage() {
           break;
         case "final_message":
           setLoading(false);
+          // 최종 메시지는 고정된 assistant 말풍선으로 messages에 추가
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: ev.message },
+          ]);
+          // 다음 턴을 위해 tool call 플로우를 초기화하고 싶다면 주석을 해제하세요.
+          // resetToolCallStore();
           break;
       }
     }
@@ -158,7 +163,7 @@ export default function ChatPage() {
               </div>
             ))}
             {/* 스트리밍 중: 한 말풍선에서 중간 메시지가 실시간으로 갱신 */}
-            {streamingContent ? (
+            {loading && streamingContent ? (
               <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2 animate-in fade-in duration-200 animate-streaming-border">
                 <div className="markdown-content prose prose-invert max-w-none animate-streaming-text">
                   <ReactMarkdown

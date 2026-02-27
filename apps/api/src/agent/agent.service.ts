@@ -82,6 +82,7 @@ export type AgentEvent =
     }
   | {
       type: "final_message";
+      message: string;
     };
 
 /** BaseMessage content를 string으로 추출 (string | MessageContentBlock[] 지원). */
