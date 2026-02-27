@@ -82,9 +82,6 @@ export type AgentEvent =
     }
   | {
       type: "final_message";
-      message: string;
-      toolCallsUsed: number;
-      toolCalls: ToolCall[];
     };
 
 /** BaseMessage content를 string으로 추출 (string | MessageContentBlock[] 지원). */
@@ -443,6 +440,7 @@ Reply in the same language as the user when appropriate.`;
           }
         }
       }
+
       return resultMessages;
     } finally {
       await closeMcp();

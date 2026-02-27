@@ -33,16 +33,13 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 이벤트에서 스트리밍 텍스트 파생 (assistant_message 누적, final 전까지)
-  const streamingContent =
-    events.some((e) => e.type === "final_message") === false
-      ? (() => {
-          const parts: string[] = [];
-          for (const ev of events) {
-            if (ev.type === "assistant_message") parts.push(ev.content);
-          }
-          return parts.join("");
-        })()
-      : "";
+  const streamingContent = (() => {
+    const parts: string[] = [];
+    for (const ev of events) {
+      if (ev.type === "assistant_message") parts.push(ev.content);
+    }
+    return parts.join("");
+  })();
 
   // 스트리밍/새 메시지 시 하단으로 스크롤
   useEffect(() => {
@@ -60,7 +57,6 @@ export default function ChatPage() {
     lastEventIndexRef.current = events.length;
 
     const newToolCalls: ToolCall[] = [];
-    let finalMessage: string | null = null;
 
     for (const ev of newEvents) {
       switch (ev.type) {
@@ -73,21 +69,13 @@ export default function ChatPage() {
           );
           break;
         case "final_message":
-          finalMessage = ev.message;
+          setLoading(false);
           break;
       }
     }
 
     if (newToolCalls.length) {
       addToolCalls(newToolCalls);
-    }
-
-    if (finalMessage != null) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: finalMessage },
-      ]);
-      setLoading(false);
     }
   }, [events]);
 
