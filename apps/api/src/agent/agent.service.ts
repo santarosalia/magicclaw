@@ -98,58 +98,6 @@ function getMessageContentAsString(msg: BaseMessage): string {
   return "";
 }
 
-/** result.messages에서 툴 호출 로그와 최종 응답 텍스트 추출. 스트리밍 시 startIndex로 신규 메시지만 처리해 onEvent 발송. */
-function processResultMessages(
-  messages: BaseMessage[],
-  opts?: { onEvent?: (event: AgentEvent) => void; startIndex?: number }
-): {
-  toolCallsLog: ToolCall[];
-  toolCallsUsed: number;
-  finalMessage: string;
-} {
-  const toolCallsLog: ToolCall[] = [];
-  let toolCallsUsed = 0;
-  let finalMessage = "";
-  const start = opts?.startIndex ?? 0;
-  for (let i = start; i < messages.length; i++) {
-    const msg = messages[i];
-    if (msg instanceof AIMessage) {
-      const content = getMessageContentAsString(msg);
-      if (content && opts?.onEvent)
-        opts.onEvent({ type: "assistant_message", content });
-      const toolCalls = msg.tool_calls ?? [];
-
-      for (let j = 0; j < toolCalls.length; j++) {
-        const toolCall = toolCalls[j] as ToolCall;
-
-        toolCallsLog.push(toolCall);
-        toolCallsUsed++;
-        if (opts?.onEvent && !toolCall.error) {
-          opts.onEvent({ type: "tool_call", toolCall });
-        }
-      }
-
-      if (toolCalls.length > 0) {
-        i += toolCalls.length - 1;
-      } else if (content) {
-        finalMessage = content;
-      }
-    }
-
-    if (msg instanceof ToolMessage) {
-      if (opts?.onEvent) {
-        opts.onEvent({ type: "tool_message", toolMessage: msg });
-      }
-    }
-  }
-  if (!finalMessage && messages.length > 0) {
-    const last = messages[messages.length - 1];
-    if (last && "content" in last)
-      finalMessage = getMessageContentAsString(last as BaseMessage);
-  }
-  return { toolCallsLog, toolCallsUsed, finalMessage };
-}
-
 @Injectable()
 export class AgentService {
   constructor(
@@ -385,7 +333,6 @@ Reply in the same language as the user when appropriate.`;
               const toolCalls = message.tool_calls;
               if (toolCalls) {
                 for (const toolCall of toolCalls) {
-                  console.log("툴콜 이벤트 발생");
                   onEvent({
                     type: "tool_call",
                     toolCall: toolCall as ToolCall,
@@ -429,7 +376,7 @@ Reply in the same language as the user when appropriate.`;
                 case "agent":
                 case "agent_direct":
                   if (token instanceof AIMessageChunk && token.content) {
-                    const content = token.content ?? null;
+                    const content = token.content;
                     if (content) {
                       onEvent({ type: "assistant_message", content });
                     }
@@ -439,6 +386,13 @@ Reply in the same language as the user when appropriate.`;
 
               break;
           }
+        }
+
+        // 그래프가 모두 끝난 뒤 서비스 레이어에서 파이널 메시지 이벤트를 생성
+        if (resultMessages.length > 0) {
+          const last = resultMessages[resultMessages.length - 1];
+          const finalText = getMessageContentAsString(last).trim();
+          onEvent({ type: "final_message", message: finalText });
         }
       }
 
