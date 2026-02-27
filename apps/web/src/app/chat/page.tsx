@@ -40,7 +40,7 @@ export default function ChatPage() {
           for (const ev of events) {
             if (ev.type === "assistant_message") parts.push(ev.content);
           }
-          return parts.join("\n\n");
+          return parts.join("");
         })()
       : "";
 

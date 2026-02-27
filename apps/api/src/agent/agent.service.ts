@@ -22,6 +22,8 @@ import {
   HumanMessage,
   BaseMessage,
   ToolCall,
+  AIMessageChunk,
+  ContentBlock,
 } from "langchain";
 
 /** 플랜 텍스트를 번호/불릿 기준으로 단계 배열로 파싱. */
@@ -72,7 +74,7 @@ export type AgentEvent =
     }
   | {
       type: "assistant_message";
-      content: string;
+      content: string | (ContentBlock | Text)[];
     }
   | {
       type: "tool_message";
@@ -357,7 +359,6 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
     const { messagesLc } = options;
-    console.log(messagesLc);
     const llm = this.getLangChainModel(defaultModel);
     const { tools, close: closeMcp } = await this.getMcpToolsAsLangChain();
 
@@ -373,88 +374,86 @@ Reply in the same language as the user when appropriate.`;
         messages: messagesLc,
       };
 
-      let resultMessages: BaseMessage[] = [];
-      let planEmitted = false;
+      const resultMessages: BaseMessage[] = [];
 
       if (onEvent) {
         const stream = await graph.stream(initialState, {
-          streamMode: "values",
+          streamMode: ["updates", "messages", "values"],
           recursionLimit: 100,
         });
-        let prevLen = 0;
-        let lastEmittedContentLength = 0;
-        for await (const chunk of stream) {
-          const stateChunk = chunk as {
-            messages?: BaseMessage[];
-            planSteps?: string[];
-            currentStepIndex?: number;
-          };
-          const chunkMessages = stateChunk.messages ?? [];
-          // 플랜 이벤트: planner 노드 이후 planSteps 있을 때 한 번만 발송
-          if (
-            !planEmitted &&
-            Array.isArray(stateChunk.planSteps) &&
-            stateChunk.planSteps.length > 0
-          ) {
-            onEvent({
-              type: "plan",
-              content: stateChunk.planSteps
-                .map((s, i) => `${i + 1}. ${s}`)
-                .join("\n"),
-            });
-            planEmitted = true;
+
+        for await (const [kind, data] of stream) {
+          switch (kind) {
+            case "values":
+              break;
+            case "updates":
+              break;
+            case "messages":
+              const [token, metadata] = data;
+              switch (metadata.langgraph_node) {
+                case "planner":
+                  if (token instanceof AIMessageChunk && token.content) {
+                    const content = token.content ?? null;
+                    if (content) {
+                      onEvent({ type: "assistant_message", content });
+                    }
+                  }
+                  break;
+                case "agent":
+                case "agent_direct":
+                  if (token instanceof AIMessageChunk && token.content) {
+                    const content = token.content ?? null;
+                    if (content) {
+                      onEvent({ type: "assistant_message", content });
+                    }
+                  }
+                  break;
+              }
+
+              break;
           }
-          // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
-          const lastMsg = chunkMessages[chunkMessages.length - 1];
-          if (lastMsg instanceof AIMessage) {
-            const content = getMessageContentAsString(lastMsg);
-            if (content.length > lastEmittedContentLength) {
-              onEvent({
-                type: "assistant_message",
-                content: content.slice(lastEmittedContentLength),
-              });
-              lastEmittedContentLength = content.length;
-            }
-          } else {
-            lastEmittedContentLength = 0;
-          }
-          processResultMessages(chunkMessages, {
-            onEvent: (e) => {
-              if (e.type !== "assistant_message") onEvent(e);
-            },
-            startIndex: prevLen,
-          });
-          prevLen = chunkMessages.length;
-          resultMessages = chunkMessages;
         }
-      } else {
-        const result = (await graph.invoke(initialState, {
-          recursionLimit: 100,
-        })) as {
-          messages?: BaseMessage[];
-          planSteps?: string[];
-          currentStepIndex?: number;
-        };
-        resultMessages = result.messages ?? [];
+
+        // for await (const chunk of stream) {
+        //   const chunkMessages = chunk.messages ?? [];
+        //   // 플랜 이벤트: planner 노드 이후 planSteps 있을 때 한 번만 발송
+        //   if (
+        //     !planEmitted &&
+        //     Array.isArray(chunk.planSteps) &&
+        //     chunk.planSteps.length > 0
+        //   ) {
+        //     onEvent({
+        //       type: "plan",
+        //       content: chunk.planSteps
+        //         .map((s, i) => `${i + 1}. ${s}`)
+        //         .join("\n"),
+        //     });
+        //     planEmitted = true;
+        //   }
+        //   // assistant 텍스트는 증분만 전송 (이전 내용 반복 방지)
+        //   const lastMsg = chunkMessages[chunkMessages.length - 1];
+        //   if (lastMsg instanceof AIMessage) {
+        //     const content = getMessageContentAsString(lastMsg);
+        //     if (content.length > lastEmittedContentLength) {
+        //       onEvent({
+        //         type: "assistant_message",
+        //         content: content.slice(lastEmittedContentLength),
+        //       });
+        //       lastEmittedContentLength = content.length;
+        //     }
+        //   } else {
+        //     lastEmittedContentLength = 0;
+        //   }
+        //   processResultMessages(chunkMessages, {
+        //     onEvent: (e) => {
+        //       if (e.type !== "assistant_message") onEvent(e);
+        //     },
+        //     startIndex: prevLen,
+        //   });
+        //   prevLen = chunkMessages.length;
+        //   resultMessages = chunkMessages;
+        // }
       }
-
-      const {
-        toolCallsLog,
-        toolCallsUsed,
-        finalMessage: rawFinal,
-      } = processResultMessages(resultMessages);
-
-      const finalMessage = rawFinal || "응답을 생성하지 못했습니다.";
-
-      if (onEvent) {
-        onEvent({
-          type: "final_message",
-          message: finalMessage,
-          toolCallsUsed,
-          toolCalls: toolCallsLog,
-        });
-      }
-
       return resultMessages;
     } finally {
       await closeMcp();
