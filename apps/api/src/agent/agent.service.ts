@@ -217,13 +217,15 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const steps = state.planSteps ?? [];
       const idx = state.currentStepIndex ?? 0;
       const currentStep = steps[idx]?.trim() || "(Complete the task.)";
-      const stepSection = `\n\nExecute ONLY this step (step ${idx + 1} of ${
-        steps.length || 1
-      }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`;
 
       const withSystem = [
         new SystemMessage({
-          content: systemPrompt + stepSection,
+          content: systemPrompt,
+        }),
+        new SystemMessage({
+          content: `Execute ONLY this step (step ${idx + 1} of ${
+            steps.length || 1
+          }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`,
         }),
         ...state.messages,
       ];
@@ -312,7 +314,12 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const systemPrompt = `You are a helpful assistant named MagicClaw.
 You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
-Reply in the same language as the user when appropriate.`;
+Reply in the same language as the user when appropriate.
+
+when you are executing a step, consider the previous conversation context to determine which tool to use.
+If a browser tab is already open and the user asks to search,
+prefer interacting with the current browser page instead of using the generic search tool.
+`;
 
       const graph = this.buildAgentGraph(llm, tools, systemPrompt);
 

@@ -24,7 +24,8 @@ type LlmStatusResponse = {
 function parseLlmStatus(data: LlmStatusResponse): LlmStatusState {
   if (!data) return { status: "not_configured" };
   if (!data.configured) return { status: "not_configured" };
-  if (data.connected && data.modelAvailable !== false) return { status: "configured" };
+  if (data.connected && data.modelAvailable !== false)
+    return { status: "configured" };
   return {
     status: "error",
     error: data.error ?? "연결할 수 없습니다.",
@@ -50,6 +51,7 @@ export function LlmStatusProvider({ children }: { children: ReactNode }) {
     setLlmState((prev) =>
       prev.status === "loading" ? prev : { status: "loading" }
     );
+
     fetch(url)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: LlmStatusResponse) => setLlmState(parseLlmStatus(data)))
