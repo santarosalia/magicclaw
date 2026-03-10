@@ -2,6 +2,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { McpServerConfig } from "./dto/mcp-server.dto.js";
 import type { McpToolInfo } from "./dto/mcp-server.dto.js";
+import { shTool } from "./tool/sh.js";
 
 export interface ListToolsResult {
   tools: McpToolInfo[];
@@ -66,6 +67,7 @@ class McpAdapterConnectionPool {
       onConnectionError: "ignore",
     });
     const tools = await client.getTools();
+    tools.push(shTool);
     entry = { client, tools, lastUsed: Date.now() };
     this.pool.set(key, entry);
 
