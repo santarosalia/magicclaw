@@ -5,7 +5,7 @@ import {
 } from "../mcp/mcp-client.service.js";
 import { McpStoreService } from "../mcp/mcp-store.service.js";
 import { LlmStoreService } from "../llm/llm-store.service.js";
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, OpenAI } from "@langchain/openai";
 import {
   StateGraph,
   Annotation,
@@ -130,12 +130,20 @@ export class AgentService {
       );
     }
     const modelId = model ?? defaultConfig.model;
+
     return new ChatOpenAI({
       model: modelId,
       apiKey: defaultConfig.apiKey || "not-needed",
       configuration: defaultConfig.baseURL
         ? { baseURL: defaultConfig.baseURL }
         : undefined,
+      // stop: [
+      //   "<|end|>",
+      //   "<|start|>",
+      //   "<|assistant|>",
+      //   "<|user|>",
+      //   "<|channel|>",
+      // ],
     });
   }
 
@@ -154,6 +162,8 @@ export class AgentService {
     tools: StructuredToolInterface[],
     systemPrompt: string
   ) {
+    const llmWithTools = llm.bindTools(tools);
+
     const routerPrompt = `You are a task classifier. Based on the user's latest message, decide if the task is:
 - SIMPLE: one or two quick actions (e.g. single search, one click, one query). Reply with exactly: SIMPLE
 - MULTI_STEP: requires a clear sequence of several steps (e.g. open page, then search, then copy, then paste elsewhere). Reply with exactly: MULTI_STEP
@@ -181,7 +191,10 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         new SystemMessage({ content: planPrompt }),
         ...state.messages,
       ];
-      const response = await llm.invoke(withSystem);
+      const response = await llmWithTools.invoke(withSystem, {
+        tool_choice: "none",
+      });
+
       const planText =
         getMessageContentAsString(response).trim() || "(No plan)";
       const planSteps = parsePlanSteps(planText);
@@ -199,8 +212,6 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         ],
       };
     };
-
-    const llmWithTools = llm.bindTools(tools);
 
     /** 단순 작업용: 스텝 제약 없이 시스템 프롬프트만으로 도구 사용. */
     const agentDirectNode = async (state: PlanState) => {
@@ -234,19 +245,23 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       return { messages: [response] };
     };
 
-    const stepDoneNode = (state: PlanState) => ({
-      currentStepIndex: (state.currentStepIndex ?? 0) + 1,
-    });
+    const stepDoneNode = (state: PlanState) => {
+      return {
+        currentStepIndex: (state.currentStepIndex ?? 0) + 1,
+      };
+    };
 
     const hasToolCalls = (state: PlanState) => {
       const messages = state.messages ?? [];
       const last = messages[messages.length - 1];
-      return !!(
-        last &&
-        "tool_calls" in last &&
-        Array.isArray(last.tool_calls) &&
+      if (
+        last instanceof AIMessageChunk &&
+        last.tool_calls &&
         last.tool_calls.length > 0
-      );
+      ) {
+        return true;
+      }
+      return false;
     };
 
     const routeFromRouter = (state: PlanState): "planner" | "agent_direct" =>
@@ -255,8 +270,11 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
     const agentDirectToToolsOrEnd = (state: PlanState): "tools" | typeof END =>
       hasToolCalls(state) ? "tools" : END;
 
-    const agentToToolsOrStepDone = (state: PlanState): "tools" | "step_done" =>
-      hasToolCalls(state) ? "tools" : "step_done";
+    const agentToToolsOrStepDone = (
+      state: PlanState
+    ): "tools" | "step_done" => {
+      return hasToolCalls(state) ? "tools" : "step_done";
+    };
 
     const routeFromTools = (state: PlanState): "agent" | "agent_direct" =>
       state.isMultiStep ? "agent" : "agent_direct";
@@ -268,6 +286,7 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
     };
 
     const toolNode = new ToolNode(tools, { handleToolErrors: true });
+
     const builder = new StateGraph(PlanStateAnnotation)
       .addNode("router", routerNode)
       .addNode("planner", plannerNode)
@@ -334,6 +353,7 @@ prefer interacting with the current browser page instead of using the generic se
           streamMode: ["updates", "messages", "values"],
           recursionLimit: 100,
         });
+
         const onToolCall = (messages: BaseMessage[]) => {
           for (const message of messages) {
             if (message instanceof AIMessageChunk && message.tool_calls) {
@@ -378,6 +398,7 @@ prefer interacting with the current browser page instead of using the generic se
                     if (content) {
                       onEvent({ type: "assistant_message", content });
                     }
+                    // 플랜 종료 구분 하려면 type plan message 로 구분하고 agent message 수신 시 plan message 종료 처리 하기
                   }
                   break;
                 case "agent":
@@ -394,7 +415,6 @@ prefer interacting with the current browser page instead of using the generic se
               break;
           }
         }
-
         // 그래프가 모두 끝난 뒤 서비스 레이어에서 파이널 메시지 이벤트를 생성
         if (resultMessages.length > 0) {
           const last = resultMessages[resultMessages.length - 1];

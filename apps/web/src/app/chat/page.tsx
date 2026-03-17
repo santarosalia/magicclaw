@@ -71,10 +71,8 @@ export default function ChatPage() {
           // 최종 메시지는 고정된 assistant 말풍선으로 messages에 추가
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: ev.message },
+            { role: "assistant", content: streamingContent },
           ]);
-          // 다음 턴을 위해 tool call 플로우를 초기화하고 싶다면 주석을 해제하세요.
-          // resetToolCallStore();
           break;
       }
     }
