@@ -327,6 +327,7 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
     const { messagesLc } = options;
+    console.log("messagesLc", messagesLc);
     const llm = this.getLangChainModel(defaultModel);
     const { tools, close: closeMcp } = await this.getMcpToolsAsLangChain();
 
@@ -349,79 +350,75 @@ prefer interacting with the current browser page instead of using the generic se
 
       let resultMessages: BaseMessage[] = [];
 
-      if (onEvent) {
-        const stream = await graph.stream(initialState, {
-          streamMode: ["updates", "messages", "values"],
-          recursionLimit: 100,
-        });
-
-        const onToolCall = (messages: BaseMessage[]) => {
-          for (const message of messages) {
-            if (message instanceof AIMessageChunk && message.tool_calls) {
-              const toolCalls = message.tool_calls;
-              if (toolCalls) {
-                for (const toolCall of toolCalls) {
-                  onEvent({
-                    type: "tool_call",
-                    toolCall: toolCall as ToolCall,
-                  });
-                }
+      const stream = await graph.stream(initialState, {
+        streamMode: ["updates", "messages", "values"],
+        recursionLimit: 100,
+      });
+      const onToolCall = (messages: BaseMessage[]) => {
+        for (const message of messages) {
+          if (message instanceof AIMessageChunk && message.tool_calls) {
+            const toolCalls = message.tool_calls;
+            if (toolCalls) {
+              for (const toolCall of toolCalls) {
+                onEvent?.({
+                  type: "tool_call",
+                  toolCall: toolCall as ToolCall,
+                });
               }
             }
           }
-        };
-
-        for await (const [kind, data] of stream) {
-          switch (kind) {
-            case "values":
-              resultMessages = data.messages;
-              break;
-            case "updates":
-              if (data.agent) {
-                onToolCall(data.agent?.messages);
+        }
+      };
+      for await (const [kind, data] of stream) {
+        switch (kind) {
+          case "values":
+            resultMessages = data.messages;
+            break;
+          case "updates":
+            if (data.agent) {
+              onToolCall(data.agent?.messages);
+            }
+            if (data.agent_direct) {
+              onToolCall(data.agent_direct?.messages);
+            }
+            if (data.tools) {
+              const messages = data.tools?.messages as ToolMessage[];
+              for (const message of messages) {
+                onEvent?.({ type: "tool_message", toolMessage: message });
               }
-              if (data.agent_direct) {
-                onToolCall(data.agent_direct?.messages);
-              }
-              if (data.tools) {
-                const messages = data.tools?.messages as ToolMessage[];
-                for (const message of messages) {
-                  onEvent({ type: "tool_message", toolMessage: message });
+            }
+            break;
+          case "messages":
+            const [token, metadata] = data;
+            switch (metadata.langgraph_node) {
+              case "planner":
+                if (token instanceof AIMessageChunk && token.content) {
+                  const content = token.content ?? null;
+                  if (content) {
+                    onEvent?.({ type: "assistant_message", content });
+                  }
+                  // 플랜 종료 구분 하려면 type plan message 로 구분하고 agent message 수신 시 plan message 종료 처리 하기
                 }
-              }
-              break;
-            case "messages":
-              const [token, metadata] = data;
-              switch (metadata.langgraph_node) {
-                case "planner":
-                  if (token instanceof AIMessageChunk && token.content) {
-                    const content = token.content ?? null;
-                    if (content) {
-                      onEvent({ type: "assistant_message", content });
-                    }
-                    // 플랜 종료 구분 하려면 type plan message 로 구분하고 agent message 수신 시 plan message 종료 처리 하기
+                break;
+              case "agent":
+              case "agent_direct":
+                if (token instanceof AIMessageChunk && token.content) {
+                  const content = token.content;
+                  if (content) {
+                    onEvent?.({ type: "assistant_message", content });
                   }
-                  break;
-                case "agent":
-                case "agent_direct":
-                  if (token instanceof AIMessageChunk && token.content) {
-                    const content = token.content;
-                    if (content) {
-                      onEvent({ type: "assistant_message", content });
-                    }
-                  }
-                  break;
-              }
+                }
+                break;
+            }
 
-              break;
-          }
+            break;
         }
-        // 그래프가 모두 끝난 뒤 서비스 레이어에서 파이널 메시지 이벤트를 생성
-        if (resultMessages.length > 0) {
-          const last = resultMessages[resultMessages.length - 1];
-          const finalText = getMessageContentAsString(last).trim();
-          onEvent({ type: "final_message", message: finalText });
-        }
+      }
+      // 그래프가 모두 끝난 뒤 서비스 레이어에서 파이널 메시지 이벤트를 생성
+      if (resultMessages.length > 0) {
+        const last = resultMessages[resultMessages.length - 1];
+        const finalText = getMessageContentAsString(last).trim();
+        onEvent?.({ type: "final_message", message: finalText });
       }
       return resultMessages;
     } finally {

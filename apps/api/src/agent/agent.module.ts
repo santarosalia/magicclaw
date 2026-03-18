@@ -10,5 +10,6 @@ import { SessionService } from "./session.service.js";
   imports: [McpModule, LlmModule],
   controllers: [AgentController],
   providers: [AgentService, SessionService, AgentGateway],
+  exports: [AgentService],
 })
 export class AgentModule {}

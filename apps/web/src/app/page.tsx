@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquare, Server, Brain } from "lucide-react";
+import { MessageSquare, Server, Brain, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -33,6 +33,22 @@ export default function Home() {
             <CardContent>
               <Button asChild className="w-full">
                 <Link href="/chat">채팅</Link>
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <MessageCircle className="h-5 w-5" />
+                메신저 설정
+              </CardTitle>
+              <CardDescription>
+                텔레그램 등의 메신저를 에이전트와 연결합니다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/messenger">메신저 설정</Link>
               </Button>
             </CardContent>
           </Card>
