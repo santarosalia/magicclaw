@@ -219,6 +219,7 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         new SystemMessage({ content: systemPrompt }),
         ...state.messages,
       ];
+
       const response = await llmWithTools.invoke(withSystem);
       return { messages: [response] };
     };
@@ -422,7 +423,6 @@ prefer interacting with the current browser page instead of using the generic se
           onEvent({ type: "final_message", message: finalText });
         }
       }
-
       return resultMessages;
     } finally {
       await closeMcp();

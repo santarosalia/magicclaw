@@ -11,98 +11,33 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import { ToolCallFlow } from "@/components/ToolCallFlow";
-import { useToolCallStore } from "@/stores/tool-call-store";
 import { useAgentSocket } from "@/lib/useAgentSocket";
-import type { ToolCall, ToolMessage } from "langchain";
-import { load } from "@langchain/core/load";
-
-type Message = { role: "user" | "assistant"; content: string };
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
   const {
-    addToolCalls,
-    addToolMessage,
-    reset: resetToolCallStore,
-  } = useToolCallStore();
-  const { connecting, connected, events, sendChat } = useAgentSocket();
+    connecting,
+    connected,
+    loading,
+    streamingContent,
+    messages,
+    events,
+    sendChat,
+  } = useAgentSocket();
 
-  const lastEventIndexRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // 이벤트에서 스트리밍 텍스트 파생 (assistant_message 누적, final 전까지)
-  const streamingContent = (() => {
-    const parts: string[] = [];
-    for (const ev of events) {
-      if (ev.type === "assistant_message") parts.push(ev.content);
-    }
-    return parts.join("");
-  })();
 
   // 스트리밍/새 메시지 시 하단으로 스크롤
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
-  // socket 이벤트를 기반으로 toolCalls 캐시 및 최종 메시지 반영
-  useEffect(() => {
-    if (!events.length) return;
-
-    const startIndex = lastEventIndexRef.current;
-    const newEvents = events.slice(startIndex);
-    lastEventIndexRef.current = events.length;
-
-    const newToolCalls: ToolCall[] = [];
-
-    for (const ev of newEvents) {
-      switch (ev.type) {
-        case "tool_call":
-          newToolCalls.push(ev.toolCall as ToolCall);
-          break;
-        case "tool_message":
-          load<ToolMessage>(JSON.stringify(ev.toolMessage)).then((tm) =>
-            addToolMessage(tm)
-          );
-          break;
-        case "final_message":
-          setLoading(false);
-          // 최종 메시지는 고정된 assistant 말풍선으로 messages에 추가
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: streamingContent },
-          ]);
-          break;
-      }
-    }
-
-    if (newToolCalls.length) {
-      addToolCalls(newToolCalls);
-    }
-  }, [events]);
-
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setLoading(true);
-    lastEventIndexRef.current = 0;
-    try {
-      // 소켓으로 사용자 메시지만 전송 (히스토리는 백엔드 세션에서 관리)
-      sendChat(text);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "오류: " + (err instanceof Error ? err.message : String(err)),
-        },
-      ]);
-      setLoading(false);
-    }
+    // 소켓으로 사용자 메시지만 전송 (히스토리는 백엔드 세션에서 관리)
+    sendChat(text);
   }, [input, loading, sendChat]);
 
   return (
