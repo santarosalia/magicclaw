@@ -17,8 +17,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private bot: Bot<Context> | null = null;
   private agentService: AgentService | null = null;
 
-  private botReadyResolver: ((bot: Bot<Context>) => void) | null = null;
-
   constructor(
     private readonly messengerStore: MessengerStoreService,
     private readonly session: SessionService,
@@ -37,8 +35,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     try {
       const bot = new Bot<Context>(token);
       this.bot = bot;
-      this.botReadyResolver?.(bot);
-      this.botReadyResolver = null;
 
       this.registerHandlers(bot);
       bot.start();
@@ -48,8 +44,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       this.bot = null;
     }
   }
-  onModuleDestroy(): void {
-    this.bot?.stop();
+  async onModuleDestroy() {
+    await this.bot?.stop();
   }
 
   private registerHandlers(bot: Bot<Context>): void {
@@ -61,13 +57,49 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     });
 
     bot.on("message:text", async (ctx: Context) => {
-      if (ctx.from?.id !== 8714125059) return;
       if (!ctx.message) return;
       if (!ctx.chatId) return;
 
       const history = this.session.get(String(ctx.chatId));
       const text = ctx.message.text?.trim() ?? "";
       if (!text) return;
+      // Command messages are handled by `bot.command(...)`.
+      if (text.startsWith("/")) return;
+
+      const fromId = ctx.from?.id;
+      if (!fromId) return;
+
+      const fromIdStr = String(fromId);
+      const cfg = this.messengerStore.getTelegramConfig();
+
+      // 접근제어: openclaw 문서의 dmPolicy를 현재 프로젝트에서는 모든 채팅 메시지에 간단화해서 적용합니다.
+      // - pairing: pairedFrom에 있으면 허용. pairedFrom이 비어있으면 첫 사용자 자동 페어링.
+      // - allowlist: allowFrom에 있으면 허용(비어있으면 전부 차단).
+      // - open: 전부 허용
+      // - disabled: 전부 차단
+      switch (cfg.dmPolicy) {
+        case "disabled":
+          return await ctx.reply("권한이 없습니다.");
+        case "open":
+          break;
+        case "allowlist":
+          if (!cfg.allowFrom.includes(fromIdStr))
+            return await ctx.reply("권한이 없습니다.");
+          break;
+        case "pairing":
+          if (!cfg.pairedFrom.includes(fromIdStr)) {
+            if ((cfg.pairedFrom ?? []).length === 0) {
+              // 초기 설정 편의: 첫 사용자를 자동 페어링.
+              this.messengerStore.pairTelegramUser(fromIdStr);
+              return ctx.reply(
+                "페어링이 완료되었습니다. 이제 DM 메시지를 보낼 수 있어요."
+              );
+            } else {
+              return ctx.reply("권한이 없습니다.");
+            }
+          }
+          break;
+      }
 
       try {
         if (!this.agentService) {

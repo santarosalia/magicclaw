@@ -42,9 +42,7 @@ export default function Home() {
                 <MessageCircle className="h-5 w-5" />
                 메신저 설정
               </CardTitle>
-              <CardDescription>
-                텔레그램 등의 메신저를 에이전트와 연결합니다.
-              </CardDescription>
+              <CardDescription>메신저를 에이전트와 연결합니다.</CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" className="w-full">
