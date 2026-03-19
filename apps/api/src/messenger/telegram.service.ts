@@ -17,18 +17,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private bot: Bot<Context> | null = null;
   private agentService: AgentService | null = null;
 
-  private readonly botReadyPromise: Promise<Bot<Context>>;
   private botReadyResolver: ((bot: Bot<Context>) => void) | null = null;
 
   constructor(
     private readonly messengerStore: MessengerStoreService,
     private readonly session: SessionService,
     private readonly moduleRef: ModuleRef
-  ) {
-    this.botReadyPromise = new Promise<Bot<Context>>((resolve) => {
-      this.botReadyResolver = resolve;
-    });
-  }
+  ) {}
 
   async onModuleInit(): Promise<void> {
     const token = this.messengerStore.getTelegramBotToken();
@@ -55,18 +50,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
   onModuleDestroy(): void {
     this.bot?.stop();
-  }
-
-  private async getBotWithTimeout(ms: number): Promise<Bot<Context>> {
-    if (this.bot) return this.bot;
-
-    const timeout = new Promise<Bot<Context>>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Telegram bot not initialized within ${ms}ms`));
-      }, ms);
-    });
-
-    return Promise.race([this.botReadyPromise, timeout]);
   }
 
   private registerHandlers(bot: Bot<Context>): void {
@@ -127,8 +110,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   async sendDocument(chatId: string, filePath: string): Promise<void> {
-    const bot = await this.getBotWithTimeout(10_000);
-
-    await bot.api.sendDocument(String(chatId), new InputFile(filePath));
+    await this.bot?.api.sendDocument(String(chatId), new InputFile(filePath));
   }
 }
