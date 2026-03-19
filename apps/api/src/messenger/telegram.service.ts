@@ -123,6 +123,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         const messagesLc = [...history, userMsg];
 
         await ctx.replyWithChatAction("typing");
+        const firstMessage = await ctx.reply("응답을 생성하는 중입니다...");
         const messagesLcResult = await this.agentService.chat({
           messagesLc,
           sessionId: String(ctx.chatId),
@@ -132,7 +133,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         const content = typeof last?.content === "string" ? last.content : "";
         const replyText = content || "응답을 생성하지 못했습니다.";
 
-        await ctx.reply(replyText);
+        await ctx.api.editMessageText(
+          ctx.chatId,
+          firstMessage.message_id,
+          replyText
+        );
 
         const newMessages = messagesLcResult.slice(messagesLc.length - 1);
         this.session.append(String(ctx.chatId), ...newMessages);
