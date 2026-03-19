@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post } from "@nestjs/common";
 import { MessengerStoreService } from "../store/messenger-store.service.js";
 import type { TelegramMessengerConfig } from "../store/messenger-store.service.js";
 
@@ -17,16 +17,16 @@ interface TelegramConfigDto {
   allowFrom?: string[];
 }
 
-@Controller('messenger')
+@Controller("messenger")
 export class MessengerController {
   constructor(private readonly store: MessengerStoreService) {}
 
-  @Get('telegram/status')
+  @Get("telegram/status")
   getTelegramStatus(): { hasToken: boolean } {
     return this.store.getTelegramStatus();
   }
 
-  @Get('telegram/config')
+  @Get("telegram/config")
   getTelegramConfig(): TelegramDmConfigResponse {
     const cfg = this.store.getTelegramConfig();
     return {
@@ -36,13 +36,15 @@ export class MessengerController {
     };
   }
 
-  @Post('telegram/token')
+  @Post("telegram/token")
   setTelegramToken(@Body() body: TelegramTokenDto): { success: boolean } {
-    this.store.setTelegramBotToken(body.botToken ?? '');
+    this.store.setTelegramConfig({
+      botToken: body.botToken ?? "",
+    });
     return { success: true };
   }
 
-  @Post('telegram/config')
+  @Post("telegram/config")
   setTelegramConfig(@Body() body: TelegramConfigDto): { success: boolean } {
     this.store.setTelegramConfig({
       dmPolicy: body.dmPolicy,
@@ -51,10 +53,9 @@ export class MessengerController {
     return { success: true };
   }
 
-  @Delete('telegram/token')
+  @Delete("telegram/token")
   clearTelegramToken(): { success: boolean } {
     this.store.clearTelegramBotToken();
     return { success: true };
   }
 }
-

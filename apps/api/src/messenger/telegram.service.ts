@@ -24,6 +24,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    this.startBot();
+  }
+  async onModuleDestroy() {
+    await this.bot?.stop();
+  }
+
+  async startBot() {
     const token = this.messengerStore.getTelegramBotToken();
     if (!token) {
       this.logger.log(
@@ -41,11 +48,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       this.logger.log("Telegram bot started with long polling.");
     } catch (error) {
       this.logger.error("Failed to start Telegram bot", error as Error);
+      if (this.bot) {
+        await this.bot.stop();
+      }
       this.bot = null;
     }
-  }
-  async onModuleDestroy() {
-    await this.bot?.stop();
   }
 
   private registerHandlers(bot: Bot<Context>): void {

@@ -61,7 +61,10 @@ export class MessengerStoreService
       },
     };
 
-    const data = this.readFile<MessengerStoreData>(this.STORE_FILE, defaultData);
+    const data = this.readFile<MessengerStoreData>(
+      this.STORE_FILE,
+      defaultData
+    );
     const legacyToken = data.telegramBotToken ?? null;
     this.telegramConfig = {
       ...defaultData.telegramConfig!,
@@ -94,11 +97,6 @@ export class MessengerStoreService
 
   getTelegramBotToken(): string | null {
     return this.telegramConfig.botToken;
-  }
-
-  setTelegramBotToken(token: string): void {
-    this.telegramConfig.botToken = token || null;
-    this.saveToFile();
   }
 
   clearTelegramBotToken(): void {
@@ -141,9 +139,11 @@ export class MessengerStoreService
     if (!userId) return;
 
     if (!this.telegramConfig.pairedFrom.includes(userId)) {
-      this.telegramConfig.pairedFrom = [...this.telegramConfig.pairedFrom, userId];
+      this.telegramConfig.pairedFrom = [
+        ...this.telegramConfig.pairedFrom,
+        userId,
+      ];
       this.saveToFile();
     }
   }
 }
-
