@@ -12,7 +12,7 @@ import type {
   LlmConfig,
   UpdateLlmConfigDto,
 } from "./dto/llm-config.dto.js";
-import { LlmStoreService } from "./llm-store.service.js";
+import { LlmStoreService } from "../store/llm-store.service.js";
 
 /** GET /v1/models 응답 (OpenAI 호환) */
 interface ModelsListResponse {

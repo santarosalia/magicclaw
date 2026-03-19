@@ -53,6 +53,7 @@ export class AgentGateway implements OnGatewayDisconnect {
     const messagesLcResult = await this.agent.chat(
       {
         messagesLc,
+        sessionId: client.id,
       },
       onEvent
     );

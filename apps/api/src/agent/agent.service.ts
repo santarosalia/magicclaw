@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import {
-  listToolsFromMcpServer,
-  getMcpToolsAsLangChain,
-} from "../mcp/mcp-client.service.js";
-import { McpStoreService } from "../mcp/mcp-store.service.js";
-import { LlmStoreService } from "../llm/llm-store.service.js";
+import { McpAdapterService } from "../mcp/mcp-adapter.service.js";
+import { McpStoreService } from "../store/mcp-store.service.js";
+import { LlmStoreService } from "../store/llm-store.service.js";
 import { ChatOpenAI, OpenAI } from "@langchain/openai";
 import {
   StateGraph,
@@ -49,6 +46,7 @@ const PlanStateAnnotation = Annotation.Root({
   isMultiStep: Annotation<boolean>(),
   planSteps: Annotation<string[]>(),
   currentStepIndex: Annotation<number>(),
+  sessionId: Annotation<string>(),
 });
 type PlanState = typeof PlanStateAnnotation.State;
 
@@ -59,6 +57,7 @@ export interface ChatMessage {
 
 export interface AgentChatOptions {
   messagesLc: BaseMessage[];
+  sessionId: string;
 }
 
 export type AgentEvent =
@@ -102,7 +101,8 @@ function getMessageContentAsString(msg: BaseMessage): string {
 export class AgentService {
   constructor(
     private readonly mcpStore: McpStoreService,
-    private readonly llmStore: LlmStoreService
+    private readonly llmStore: LlmStoreService,
+    private readonly mcpAdapter: McpAdapterService
   ) {}
 
   /** 등록된 MCP 서버에서 도구 목록만 반환 (API 목록용). */
@@ -111,7 +111,7 @@ export class AgentService {
     const seen = new Set<string>();
     const tools: { name: string; description?: string }[] = [];
     for (const server of servers) {
-      const result = await listToolsFromMcpServer(server);
+      const result = await this.mcpAdapter.listToolsFromMcpServer(server);
       for (const t of result.tools) {
         if (seen.has(t.name)) continue;
         seen.add(t.name);
@@ -153,7 +153,7 @@ export class AgentService {
     close: () => Promise<void>;
   }> {
     const servers = this.mcpStore.findAll();
-    return getMcpToolsAsLangChain(servers);
+    return this.mcpAdapter.getMcpToolsAsLangChain(servers);
   }
 
   /** LangGraph StateGraph: router → (단순: agent_direct | 단계: planner → agent) + 공용 tools. */
@@ -237,7 +237,8 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         new SystemMessage({
           content: `Execute ONLY this step (step ${idx + 1} of ${
             steps.length || 1
-          }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.`,
+          }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.
+          Your session ID is ${state.sessionId}.`,
         }),
         ...state.messages,
       ];
@@ -326,8 +327,7 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
   ): Promise<BaseMessage[]> {
     const defaultConfig = this.llmStore.findDefault();
     const defaultModel = defaultConfig?.model || "gpt-4o-mini";
-    const { messagesLc } = options;
-    console.log("messagesLc", messagesLc);
+    const { messagesLc, sessionId } = options;
     const llm = this.getLangChainModel(defaultModel);
     const { tools, close: closeMcp } = await this.getMcpToolsAsLangChain();
 
@@ -344,8 +344,9 @@ prefer interacting with the current browser page instead of using the generic se
 
       const graph = this.buildAgentGraph(llm, tools, systemPrompt);
 
-      const initialState: { messages: BaseMessage[] } = {
+      const initialState: { messages: BaseMessage[]; sessionId: string } = {
         messages: messagesLc,
+        sessionId,
       };
 
       let resultMessages: BaseMessage[] = [];

@@ -1,11 +1,11 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { Injectable, OnModuleInit } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import type {
   CreateMcpServerDto,
   McpServerConfig,
   UpdateMcpServerDto,
-} from './dto/mcp-server.dto.js';
-import { FileStoreService } from '../common/file-store.service.js';
+} from "../mcp/dto/mcp-server.dto.js";
+import { FileStoreService } from "../common/file-store.service.js";
 
 interface McpStoreData {
   servers: Record<string, McpServerConfig>;
@@ -14,17 +14,14 @@ interface McpStoreData {
 @Injectable()
 export class McpStoreService extends FileStoreService implements OnModuleInit {
   private servers = new Map<string, McpServerConfig>();
-  private readonly STORE_FILE = 'mcp-servers.json';
+  private readonly STORE_FILE = "mcp-servers.json";
 
   onModuleInit() {
     this.loadFromFile();
   }
 
   private loadFromFile(): void {
-    const data = this.readFile<McpStoreData>(
-      this.STORE_FILE,
-      { servers: {} }
-    );
+    const data = this.readFile<McpStoreData>(this.STORE_FILE, { servers: {} });
     this.servers = new Map(Object.entries(data.servers));
   }
 
@@ -37,7 +34,8 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
 
   findAll(): McpServerConfig[] {
     return Array.from(this.servers.values()).sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
   }
 
@@ -50,7 +48,7 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
     const config: McpServerConfig = {
       id,
       name: dto.name,
-      type: 'stdio',
+      type: "stdio",
       command: dto.command,
       args: dto.args ?? [],
       env: dto.env,
@@ -84,3 +82,4 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
     return deleted;
   }
 }
+

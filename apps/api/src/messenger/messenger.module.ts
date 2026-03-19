@@ -1,14 +1,13 @@
 import { Module } from "@nestjs/common";
 import { MessengerController } from "./messenger.controller.js";
-import { MessengerStoreService } from "./messenger-store.service.js";
 import { TelegramService } from "./telegram.service.js";
-import { AgentModule } from "../agent/agent.module.js";
 import { SessionService } from "../agent/session.service.js";
+import { StoreModule } from "../store/store.module.js";
 
 @Module({
-  imports: [AgentModule],
+  imports: [StoreModule],
   controllers: [MessengerController],
-  providers: [MessengerStoreService, TelegramService, SessionService],
-  exports: [MessengerStoreService, TelegramService],
+  providers: [TelegramService, SessionService],
+  exports: [TelegramService],
 })
 export class MessengerModule {}

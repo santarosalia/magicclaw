@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import {
-  callMcpTool,
-  listToolsFromMcpServer,
-} from "../mcp/mcp-client.service.js";
+import { McpAdapterService } from "../mcp/mcp-adapter.service.js";
 import type { McpServerConfig } from "../mcp/dto/mcp-server.dto.js";
-import { McpStoreService } from "../mcp/mcp-store.service.js";
+import { McpStoreService } from "../store/mcp-store.service.js";
 import type {
   FlowRunRequestDto,
   FlowRunResultDto,
@@ -51,14 +48,19 @@ function topologicalOrder(
 
 @Injectable()
 export class EngineService {
-  constructor(private readonly mcpStore: McpStoreService) {}
+  constructor(
+    private readonly mcpStore: McpStoreService,
+    private readonly mcpAdapter: McpAdapterService
+  ) {}
 
-  private async findServerForTool(toolName: string): Promise<McpServerConfig | null> {
+  private async findServerForTool(
+    toolName: string
+  ): Promise<McpServerConfig | null> {
     const cached = toolServerCache.get(toolName);
     if (cached) return cached;
 
     for (const server of this.mcpStore.findAll()) {
-      const result = await listToolsFromMcpServer(server);
+      const result = await this.mcpAdapter.listToolsFromMcpServer(server);
       if (result.tools.some((t) => t.name === toolName)) {
         toolServerCache.set(toolName, server);
         return server;
@@ -78,7 +80,7 @@ export class EngineService {
         isError: true,
       };
     }
-    const result = await callMcpTool(server, toolName, args);
+    const result = await this.mcpAdapter.callMcpTool(server, toolName, args);
     const text = result.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
       .map((c) => c.text)
@@ -104,10 +106,7 @@ export class EngineService {
 
     const nodeMap = new Map(toolNodes.map((n) => [n.id, n]));
     const nodeIds = toolNodes.map((n) => n.id);
-    const order =
-      edges.length > 0
-        ? topologicalOrder(nodeIds, edges)
-        : nodeIds;
+    const order = edges.length > 0 ? topologicalOrder(nodeIds, edges) : nodeIds;
 
     const results: FlowNodeResult[] = [];
     for (const id of order) {

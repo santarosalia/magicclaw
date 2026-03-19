@@ -1,10 +1,10 @@
 import { Module } from "@nestjs/common";
 import { EngineController } from "./engine.controller.js";
 import { EngineService } from "./engine.service.js";
-import { McpModule } from "../mcp/mcp.module.js";
+import { StoreModule } from "../store/store.module.js";
 
 @Module({
-  imports: [McpModule],
+  imports: [StoreModule],
   controllers: [EngineController],
   providers: [EngineService],
 })

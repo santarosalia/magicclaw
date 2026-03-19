@@ -6,83 +6,94 @@ import {
   Param,
   Patch,
   Post,
-} from '@nestjs/common';
+} from "@nestjs/common";
 import type {
   CreateMcpServerDto,
   McpServerConfig,
   UpdateMcpServerDto,
-} from './dto/mcp-server.dto.js';
-import { listToolsFromMcpServer } from './mcp-client.service.js';
-import { McpStoreService } from './mcp-store.service.js';
+} from "./dto/mcp-server.dto.js";
+import { McpStoreService } from "../store/mcp-store.service.js";
+import { McpAdapterService } from "./mcp-adapter.service.js";
 
-@Controller('mcp')
+@Controller("mcp")
 export class McpController {
-  constructor(private readonly store: McpStoreService) {}
+  constructor(
+    private readonly store: McpStoreService,
+    private readonly mcpAdapter: McpAdapterService
+  ) {}
 
-  @Get('servers')
+  @Get("servers")
   listServers(): McpServerConfig[] {
     return this.store.findAll();
   }
 
   /** 등록된 모든 MCP 서버의 연결 상태 조회 (툴 목록 조회로 연결 검사) */
-  @Get('servers/status')
+  @Get("servers/status")
   async listServersStatus(): Promise<
-    { id: string; name: string; status: 'ok' | 'error'; error?: string }[]
+    { id: string; name: string; status: "ok" | "error"; error?: string }[]
   > {
     const servers = this.store.findAll();
     const results = await Promise.all(
       servers.map(async (config) => {
-        const result = await listToolsFromMcpServer(config);
+        const result = await this.mcpAdapter.listToolsFromMcpServer(config);
         if (result.error) {
           return {
             id: config.id,
             name: config.name,
-            status: 'error' as const,
+            status: "error" as const,
             error: result.error,
           };
         }
         return {
           id: config.id,
           name: config.name,
-          status: 'ok' as const,
+          status: "ok" as const,
         };
-      }),
+      })
     );
     return results;
   }
 
-  @Get('servers/:id')
-  getServer(@Param('id') id: string): McpServerConfig | undefined {
+  @Get("servers/:id")
+  getServer(@Param("id") id: string): McpServerConfig | undefined {
     return this.store.findOne(id);
   }
 
-  @Post('servers')
+  @Post("servers")
   createServer(@Body() dto: CreateMcpServerDto): McpServerConfig {
     return this.store.create(dto);
   }
 
-  @Patch('servers/:id')
+  @Patch("servers/:id")
   updateServer(
-    @Param('id') id: string,
-    @Body() dto: UpdateMcpServerDto,
+    @Param("id") id: string,
+    @Body() dto: UpdateMcpServerDto
   ): McpServerConfig | undefined {
     return this.store.update(id, dto);
   }
 
-  @Delete('servers/:id')
-  removeServer(@Param('id') id: string): { deleted: boolean } {
+  @Delete("servers/:id")
+  removeServer(@Param("id") id: string): { deleted: boolean } {
     return { deleted: this.store.remove(id) };
   }
 
-  @Get('servers/:id/tools')
-  async listServerTools(@Param('id') id: string): Promise<{ tools: { name: string; description?: string }[]; error?: string }> {
+  @Get("servers/:id/tools")
+  async listServerTools(
+    @Param("id") id: string
+  ): Promise<{
+    tools: { name: string; description?: string }[];
+    error?: string;
+  }> {
     const config = this.store.findOne(id);
     if (!config) {
-      return { tools: [], error: 'Server not found' };
+      return { tools: [], error: "Server not found" };
     }
-    const result = await listToolsFromMcpServer(config);
+    const result = await this.mcpAdapter.listToolsFromMcpServer(config);
     return {
-      tools: result.tools.map((t) => ({ name: t.name, description: t.description })),
+      tools: result.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+      })),
       error: result.error,
     };
   }

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Post } from '@nestjs/common';
-import { MessengerStoreService } from './messenger-store.service.js';
+import { MessengerStoreService } from "../store/messenger-store.service.js";
 
 interface TelegramTokenDto {
   botToken: string;

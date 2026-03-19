@@ -1,5 +1,5 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { FileStoreService } from '../common/file-store.service.js';
+import { Injectable, OnModuleInit } from "@nestjs/common";
+import { FileStoreService } from "../common/file-store.service.js";
 
 interface MessengerStoreData {
   telegramBotToken: string | null;
