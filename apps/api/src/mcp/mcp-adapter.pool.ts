@@ -3,10 +3,6 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { McpServerConfig } from "./dto/mcp-server.dto.js";
 import { shTool } from "./tool/sh.js";
-import {
-  createUploadFileTelegramTool,
-} from "./tool/uploadFile.telegram.js";
-import { TelegramService } from "../messenger/telegram.service.js";
 
 function getPoolKey(servers: McpServerConfig[]): string {
   const normalized = [...servers]
@@ -66,7 +62,7 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
 
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly telegramService: TelegramService) {
+  constructor() {
     if (typeof setInterval !== "undefined") {
       this.cleanupTimer = setInterval(
         () => this.cleanupIdleConnections(),
@@ -99,10 +95,6 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
 
     const tools = await client.getTools();
     tools.push(shTool);
-
-    // TelegramService를 DI로 안전하게 주입받아 MCP 도구에 결합
-    tools.push(createUploadFileTelegramTool(this.telegramService));
-    // tools.push(uploadFileTelegramTool);
 
     const entry: PoolEntry = {
       client,

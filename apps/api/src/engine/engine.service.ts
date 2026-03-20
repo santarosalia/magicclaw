@@ -11,6 +11,7 @@ import type {
 
 /** 툴 이름 → MCP 서버 설정 캐시 */
 const toolServerCache = new Map<string, McpServerConfig>();
+let cacheSignature = "";
 
 /**
  * 엣지 기준 위상 정렬. source → target 순서로 실행되도록 노드 id 배열 반환.
@@ -53,9 +54,26 @@ export class EngineService {
     private readonly mcpAdapter: McpAdapterService
   ) {}
 
+  private getStoreSignature(): string {
+    return JSON.stringify(
+      this.mcpStore
+        .findAll()
+        .map((s) => ({ id: s.id, command: s.command, args: s.args, env: s.env }))
+        .sort((a, b) => a.id.localeCompare(b.id))
+    );
+  }
+
+  private refreshCacheIfNeeded(): void {
+    const nextSignature = this.getStoreSignature();
+    if (nextSignature === cacheSignature) return;
+    cacheSignature = nextSignature;
+    toolServerCache.clear();
+  }
+
   private async findServerForTool(
     toolName: string
   ): Promise<McpServerConfig | null> {
+    this.refreshCacheIfNeeded();
     const cached = toolServerCache.get(toolName);
     if (cached) return cached;
 

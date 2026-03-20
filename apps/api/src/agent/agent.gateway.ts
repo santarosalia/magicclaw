@@ -5,19 +5,22 @@ import {
   WebSocketGateway,
   OnGatewayDisconnect,
 } from "@nestjs/websockets";
+import { Logger } from "@nestjs/common";
 import type { Server, Socket } from "socket.io";
 import { WebSocketServer } from "@nestjs/websockets";
 import { HumanMessage } from "langchain";
-import { AgentService, type AgentEvent } from "./agent.service.js";
-import { SessionService } from "./session.service.js";
+import { AgentService } from "./agent.service.js";
+import type { AgentEvent } from "./agent.types.js";
+import { SessionService } from "../session/session.service.js";
 
 @WebSocketGateway({
   namespace: "/agent",
   cors: {
-    origin: "*",
+    origin: process.env.AGENT_WS_CORS_ORIGIN ?? process.env.WEB_ORIGIN ?? "*",
   },
 })
 export class AgentGateway implements OnGatewayDisconnect {
+  private readonly logger = new Logger(AgentGateway.name);
   @WebSocketServer()
   server!: Server;
 
@@ -50,14 +53,23 @@ export class AgentGateway implements OnGatewayDisconnect {
       client.emit("agent_event", event);
     };
 
-    const messagesLcResult = await this.agent.chat(
-      {
-        messagesLc,
-        sessionId: client.id,
-      },
-      onEvent
-    );
-    const newMessages = messagesLcResult.slice(messagesLc.length - 1);
-    this.session.append(client.id, ...newMessages);
+    try {
+      const messagesLcResult = await this.agent.chat(
+        {
+          messagesLc,
+          sessionId: client.id,
+        },
+        onEvent
+      );
+      const newMessages = messagesLcResult.slice(messagesLc.length - 1);
+      this.session.append(client.id, ...newMessages);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error(`chat handling failed: ${message}`);
+      client.emit("agent_error", {
+        message: "에이전트 처리 중 오류가 발생했습니다.",
+      });
+    }
   }
 }
