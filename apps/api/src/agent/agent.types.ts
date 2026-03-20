@@ -4,6 +4,7 @@ import type { ToolCall, ToolMessage, BaseMessage } from "langchain";
 export interface AgentChatOptions {
   messagesLc: BaseMessage[];
   sessionId: string;
+  channel: AgentChannel;
 }
 
 export type AgentEvent =
@@ -37,4 +38,10 @@ export function getMessageContentAsString(msg: BaseMessage): string {
       .join("");
   }
   return "";
+}
+
+export enum AgentChannel {
+  WEB = "web",
+  TELEGRAM = "telegram",
+  API = "api",
 }

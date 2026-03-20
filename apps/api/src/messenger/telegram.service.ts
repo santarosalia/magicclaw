@@ -6,12 +6,13 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import { Bot, Context, InputFile } from "grammy";
-import { MessengerStoreService } from "../store/messenger-store.service.js";
+import { MessengerStoreService } from "../store/messenger-store.service";
 import {
   CHAT_ORCHESTRATOR,
   type ChatOrchestrator,
-} from "./chat-orchestrator.port.js";
-import { TelegramPolicyService } from "./telegram-policy.service.js";
+} from "./chat-orchestrator.port";
+import { TelegramPolicyService } from "./telegram-policy.service";
+import { AgentChannel } from "../agent/agent.types";
 
 @Injectable()
 export class TelegramService implements OnModuleInit, OnModuleDestroy {
@@ -99,7 +100,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         await ctx.replyWithChatAction("typing");
         const replyText = await this.chatOrchestrator.chat(
           String(ctx.chatId),
-          text
+          text,
+          AgentChannel.TELEGRAM
         );
 
         await ctx.api.editMessageText(

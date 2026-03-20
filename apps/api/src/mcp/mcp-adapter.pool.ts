@@ -16,9 +16,7 @@ function getPoolKey(servers: McpServerConfig[]): string {
   return JSON.stringify(normalized);
 }
 
-function buildMcpServersRecord(
-  servers: McpServerConfig[]
-): Record<
+function buildMcpServersRecord(servers: McpServerConfig[]): Record<
   string,
   {
     transport: "stdio";
@@ -141,4 +139,3 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
     this.pool.clear();
   }
 }
-

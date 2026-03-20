@@ -10,7 +10,7 @@ import type { Server, Socket } from "socket.io";
 import { WebSocketServer } from "@nestjs/websockets";
 import { HumanMessage } from "langchain";
 import { AgentService } from "./agent.service.js";
-import type { AgentEvent } from "./agent.types.js";
+import { AgentChannel, AgentEvent } from "./agent.types";
 import { SessionService } from "../session/session.service.js";
 
 @WebSocketGateway({
@@ -58,14 +58,14 @@ export class AgentGateway implements OnGatewayDisconnect {
         {
           messagesLc,
           sessionId: client.id,
+          channel: AgentChannel.WEB,
         },
         onEvent
       );
       const newMessages = messagesLcResult.slice(messagesLc.length - 1);
       this.session.append(client.id, ...newMessages);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Unknown error";
       this.logger.error(`chat handling failed: ${message}`);
       client.emit("agent_error", {
         message: "에이전트 처리 중 오류가 발생했습니다.",

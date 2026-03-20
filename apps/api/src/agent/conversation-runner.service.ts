@@ -21,7 +21,8 @@ import {
   parsePlanSteps,
   getMessageContentAsString,
   type AgentEvent,
-} from "./agent.types.js";
+  AgentChannel,
+} from "./agent.types";
 
 const PlanStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -32,12 +33,16 @@ const PlanStateAnnotation = Annotation.Root({
   planSteps: Annotation<string[]>(),
   currentStepIndex: Annotation<number>(),
   sessionId: Annotation<string>(),
+  channel: Annotation<AgentChannel>(),
 });
+
 type PlanState = typeof PlanStateAnnotation.State;
 
 @Injectable()
 export class ConversationRunnerService {
-  private readonly recursionLimit = Number(process.env.AGENT_RECURSION_LIMIT ?? 100);
+  private readonly recursionLimit = Number(
+    process.env.AGENT_RECURSION_LIMIT ?? 100
+  );
   private readonly systemPrompt =
     process.env.AGENT_SYSTEM_PROMPT ??
     `You are a helpful assistant named MagicClaw.
@@ -75,7 +80,8 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
         [new SystemMessage({ content: planPrompt }), ...state.messages],
         { tool_choice: "none" }
       );
-      const planText = getMessageContentAsString(response).trim() || "(No plan)";
+      const planText =
+        getMessageContentAsString(response).trim() || "(No plan)";
       const planSteps = parsePlanSteps(planText);
       const planDisplay =
         planSteps.length > 0
@@ -129,40 +135,59 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       .addNode("tools", new ToolNode(tools, { handleToolErrors: true }))
       .addNode("step_done", stepDoneNode)
       .addEdge(START, "router")
-      .addConditionalEdges("router", (s) => (s.isMultiStep ? "planner" : "agent_direct"), [
-        "planner",
-        "agent_direct",
-      ])
+      .addConditionalEdges(
+        "router",
+        (s) => (s.isMultiStep ? "planner" : "agent_direct"),
+        ["planner", "agent_direct"]
+      )
       .addEdge("planner", "agent")
-      .addConditionalEdges("agent_direct", (s) => (hasToolCalls(s) ? "tools" : END), [
-        "tools",
-        END,
-      ])
-      .addConditionalEdges("tools", (s) => (s.isMultiStep ? "agent" : "agent_direct"), [
-        "agent",
+      .addConditionalEdges(
         "agent_direct",
-      ])
-      .addConditionalEdges("agent", (s) => (hasToolCalls(s) ? "tools" : "step_done"), [
+        (s) => (hasToolCalls(s) ? "tools" : END),
+        ["tools", END]
+      )
+      .addConditionalEdges(
         "tools",
-        "step_done",
-      ])
-      .addConditionalEdges("step_done", (s) => ((s.currentStepIndex ?? 0) < (s.planSteps?.length ?? 0) ? "agent" : END), [
+        (s) => (s.isMultiStep ? "agent" : "agent_direct"),
+        ["agent", "agent_direct"]
+      )
+      .addConditionalEdges(
         "agent",
-        END,
-      ])
+        (s) => (hasToolCalls(s) ? "tools" : "step_done"),
+        ["tools", "step_done"]
+      )
+      .addConditionalEdges(
+        "step_done",
+        (s) =>
+          (s.currentStepIndex ?? 0) < (s.planSteps?.length ?? 0)
+            ? "agent"
+            : END,
+        ["agent", END]
+      )
       .compile();
   }
 
   async run(
     llm: ChatOpenAI,
     tools: StructuredToolInterface[],
-    options: { messagesLc: BaseMessage[]; sessionId: string },
+    options: {
+      messagesLc: BaseMessage[];
+      sessionId: string;
+      channel: AgentChannel;
+    },
     onEvent?: (event: AgentEvent) => void
   ): Promise<BaseMessage[]> {
     const graph = this.buildAgentGraph(llm, tools);
     const stream = await graph.stream(
-      { messages: options.messagesLc, sessionId: options.sessionId },
-      { streamMode: ["updates", "messages", "values"], recursionLimit: this.recursionLimit }
+      {
+        messages: options.messagesLc,
+        sessionId: options.sessionId,
+        channel: options.channel,
+      },
+      {
+        streamMode: ["updates", "messages", "values"],
+        recursionLimit: this.recursionLimit,
+      }
     );
 
     let resultMessages: BaseMessage[] = [];
@@ -207,7 +232,10 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
 
     if (resultMessages.length > 0) {
       const last = resultMessages[resultMessages.length - 1];
-      onEvent?.({ type: "final_message", message: getMessageContentAsString(last).trim() });
+      onEvent?.({
+        type: "final_message",
+        message: getMessageContentAsString(last).trim(),
+      });
     }
     return resultMessages;
   }

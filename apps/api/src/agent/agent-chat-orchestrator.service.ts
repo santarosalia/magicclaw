@@ -3,6 +3,7 @@ import { HumanMessage } from "langchain";
 import { AgentService } from "./agent.service.js";
 import { SessionService } from "../session/session.service.js";
 import type { ChatOrchestrator } from "../messenger/chat-orchestrator.port.js";
+import { AgentChannel } from "./agent.types";
 
 @Injectable()
 export class AgentChatOrchestratorService implements ChatOrchestrator {
@@ -11,13 +12,18 @@ export class AgentChatOrchestratorService implements ChatOrchestrator {
     private readonly session: SessionService
   ) {}
 
-  async chat(sessionId: string, text: string): Promise<string> {
+  async chat(
+    sessionId: string,
+    text: string,
+    channel: AgentChannel
+  ): Promise<string> {
     const history = this.session.get(sessionId);
     const userMsg = new HumanMessage({ content: text });
     const messagesLc = [...history, userMsg];
     const messagesLcResult = await this.agentService.chat({
       messagesLc,
       sessionId,
+      channel,
     });
     const last = messagesLcResult.at(-1);
     const content = typeof last?.content === "string" ? last.content : "";
