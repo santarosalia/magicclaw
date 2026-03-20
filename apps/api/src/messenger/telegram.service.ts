@@ -23,11 +23,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly moduleRef: ModuleRef
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    this.startBot();
+  async onModuleInit() {
+    await this.startBot();
   }
   async onModuleDestroy() {
-    await this.bot?.stop();
+    await this.stopBot();
   }
 
   async startBot() {
@@ -53,6 +53,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       }
       this.bot = null;
     }
+  }
+
+  async stopBot() {
+    await this.bot?.stop();
+    this.bot = null;
   }
 
   private registerHandlers(bot: Bot<Context>): void {
