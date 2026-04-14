@@ -107,9 +107,10 @@ Reply with only one word: SIMPLE or MULTI_STEP.`;
       const idx = state.currentStepIndex ?? 0;
       const currentStep = steps[idx]?.trim() || "(Complete the task.)";
       const response = await llmWithTools.invoke([
-        new SystemMessage({ content: this.systemPrompt }),
         new SystemMessage({
-          content: `Execute ONLY this step (step ${idx + 1} of ${
+          content: `${this.systemPrompt} Execute ONLY this step (step ${
+            idx + 1
+          } of ${
             steps.length || 1
           }): ${currentStep}\nUse tools as needed. When this step is done, reply with a short confirmation and do not call tools.
           Your session ID is ${state.sessionId}.`,
