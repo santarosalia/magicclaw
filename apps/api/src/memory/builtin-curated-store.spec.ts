@@ -1,9 +1,7 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { BuiltinCuratedStore } from "../dist/memory/builtin-curated-store.js";
+import { BuiltinCuratedStore } from "./builtin-curated-store.js";
 
 describe("BuiltinCuratedStore", () => {
   it("adds entries and keeps frozen snapshot stable mid-session", () => {
@@ -17,13 +15,13 @@ describe("BuiltinCuratedStore", () => {
       const snapshotBefore = store.getSystemPromptBlock();
 
       const result = store.add("memory", "User prefers Korean replies.");
-      assert.equal(result.success, true);
+      expect(result.success).toBe(true);
 
       const snapshotAfter = store.getSystemPromptBlock();
-      assert.equal(snapshotAfter, snapshotBefore);
+      expect(snapshotAfter).toBe(snapshotBefore);
 
       const live = store.getLiveEntries("memory");
-      assert.ok(live.some((e) => e.includes("Korean")));
+      expect(live.some((e) => e.includes("Korean"))).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.MAGICCLAW_HOME;
       else process.env.MAGICCLAW_HOME = prev;
@@ -40,12 +38,11 @@ describe("BuiltinCuratedStore", () => {
       const storeA = new BuiltinCuratedStore("user-a", 500, 500, true, true);
       storeA.loadFromDisk();
       const result = storeA.add("user", "User's name is Alice.");
-      assert.equal(result.success, true);
+      expect(result.success).toBe(true);
 
       const storeB = new BuiltinCuratedStore("user-a", 500, 500, true, true);
       storeB.loadFromDisk();
-      const block = storeB.getSystemPromptBlock();
-      assert.ok(block.includes("Alice"));
+      expect(storeB.getSystemPromptBlock()).toContain("Alice");
     } finally {
       if (prev === undefined) delete process.env.MAGICCLAW_HOME;
       else process.env.MAGICCLAW_HOME = prev;

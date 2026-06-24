@@ -1,10 +1,8 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
 import {
   deserializeMessage,
   serializeMessage,
-} from "../dist/session/message-serializer.js";
+} from "./message-serializer.js";
 
 describe("message-serializer tool round-trip", () => {
   it("preserves tool_calls and tool messages", async () => {
@@ -27,18 +25,20 @@ describe("message-serializer tool round-trip", () => {
     const aiRound = await deserializeMessage(await serializeMessage(ai));
     const toolRound = await deserializeMessage(await serializeMessage(tool));
 
-    assert.equal(aiRound.getType(), "ai");
-    assert.equal(aiRound.tool_calls?.[0]?.name, "memory");
+    expect(aiRound.getType()).toBe("ai");
+    expect(aiRound).toBeInstanceOf(AIMessage);
+    expect((aiRound as AIMessage).tool_calls?.[0]?.name).toBe("memory");
 
-    assert.equal(toolRound.getType(), "tool");
-    assert.equal(toolRound.tool_call_id, "call_1");
-    assert.equal(toolRound.name, "memory");
+    expect(toolRound.getType()).toBe("tool");
+    expect(toolRound).toBeInstanceOf(ToolMessage);
+    expect((toolRound as ToolMessage).tool_call_id).toBe("call_1");
+    expect((toolRound as ToolMessage).name).toBe("memory");
   });
 
   it("preserves human messages", async () => {
     const human = new HumanMessage({ content: "hello" });
     const round = await deserializeMessage(await serializeMessage(human));
-    assert.equal(round.getType(), "human");
-    assert.equal(round.content, "hello");
+    expect(round.getType()).toBe("human");
+    expect(round.content).toBe("hello");
   });
 });

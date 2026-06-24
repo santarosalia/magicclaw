@@ -17,18 +17,11 @@ export default [
       },
       globals: {
         ...globals.node,
+        ...globals.jest,
       },
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
-    },
-  },
-  {
-    files: ["test/**/*.js"],
-    languageOptions: {
-      globals: {
-        ...globals.node,
-      },
     },
   },
 ];
