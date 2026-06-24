@@ -4,8 +4,18 @@ import { AgentModule } from "./agent/agent.module";
 import { LlmModule } from "./llm/llm.module";
 import { EngineModule } from "./engine/engine.module";
 import { MessengerModule } from "./messenger/messenger.module";
+import { MemoryModule } from "./memory/memory.module";
+import { SessionModule } from "./session/session.module";
 
 @Module({
-  imports: [McpModule, AgentModule, LlmModule, EngineModule, MessengerModule],
+  imports: [
+    McpModule,
+    AgentModule,
+    LlmModule,
+    EngineModule,
+    MessengerModule,
+    MemoryModule,
+    SessionModule,
+  ],
 })
 export class AppModule {}

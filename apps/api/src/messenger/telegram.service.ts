@@ -13,6 +13,7 @@ import {
 } from "./chat-orchestrator.port";
 import { TelegramPolicyService } from "./telegram-policy.service";
 import { AgentChannel } from "../agent/agent.types";
+import { resolveTelegramUserId, buildUserScope } from "../user/user-scope.js";
 
 @Injectable()
 export class TelegramService implements OnModuleInit, OnModuleDestroy {
@@ -98,10 +99,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       try {
         const firstMessage = await ctx.reply("응답을 생성하는 중입니다...");
         await ctx.replyWithChatAction("typing");
+        const userId = resolveTelegramUserId(ctx.chatId);
+        const sessionId = `${userId}:default`;
+        const userScope = buildUserScope(userId, "default");
         const replyText = await this.chatOrchestrator.chat(
-          String(ctx.chatId),
+          sessionId,
           text,
-          AgentChannel.TELEGRAM
+          AgentChannel.TELEGRAM,
+          userScope
         );
 
         await ctx.api.editMessageText(

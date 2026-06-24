@@ -1,32 +1,26 @@
 import type { ContentBlock } from "langchain";
 import type { ToolCall, ToolMessage, BaseMessage } from "langchain";
+import type { UserScope } from "../user/user-scope.js";
 
 export interface AgentChatOptions {
   messagesLc: BaseMessage[];
   sessionId: string;
   channel: AgentChannel;
+  userScope: UserScope;
+  memoryContext?: string;
+  systemMemoryBlock?: string;
+  refreshMemoryBlocks?: () => {
+    systemMemoryBlock: string;
+    memoryContext: string;
+  };
 }
 
 export type AgentEvent =
-  | { type: "plan"; content: string }
   | { type: "tool_call"; toolCall: ToolCall }
   | { type: "tool_result"; name: string; output: string }
   | { type: "assistant_message"; content: string | ContentBlock[] }
   | { type: "tool_message"; toolMessage: ToolMessage }
   | { type: "final_message"; message: string };
-
-export function parsePlanSteps(planText: string): string[] {
-  const trimmed = planText.trim();
-  if (!trimmed) return [];
-  const lines = trimmed
-    .split(/\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const steps = lines.map((line) =>
-    line.replace(/^\s*(\d+[.)]\s*|[-*]\s+)/i, "").trim()
-  );
-  return steps.length > 0 ? steps : [trimmed];
-}
 
 export function getMessageContentAsString(msg: BaseMessage): string {
   const c = msg.content;

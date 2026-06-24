@@ -1,34 +1,28 @@
 import { Injectable } from "@nestjs/common";
-import { HumanMessage } from "langchain";
-import { AgentService } from "./agent.service.js";
-import { SessionService } from "../session/session.service.js";
+import { TurnPipelineService } from "./turn-pipeline.service.js";
 import type { ChatOrchestrator } from "../messenger/chat-orchestrator.port.js";
 import { AgentChannel } from "./agent.types";
+import type { UserScope } from "../user/user-scope.js";
+import { buildUserScope } from "../user/user-scope.js";
 
 @Injectable()
 export class AgentChatOrchestratorService implements ChatOrchestrator {
-  constructor(
-    private readonly agentService: AgentService,
-    private readonly session: SessionService
-  ) {}
+  constructor(private readonly turnPipeline: TurnPipelineService) {}
 
   async chat(
     sessionId: string,
     text: string,
-    channel: AgentChannel
+    channel: AgentChannel,
+    userScope?: UserScope
   ): Promise<string> {
-    const history = this.session.get(sessionId);
-    const userMsg = new HumanMessage({ content: text });
-    const messagesLc = [...history, userMsg];
-    const messagesLcResult = await this.agentService.chat({
-      messagesLc,
+    const scope =
+      userScope ?? buildUserScope(`legacy:${sessionId}`, sessionId);
+
+    return this.turnPipeline.runTurn({
       sessionId,
       channel,
+      userScope: scope,
+      userText: text,
     });
-    const last = messagesLcResult.at(-1);
-    const content = typeof last?.content === "string" ? last.content : "";
-    const newMessages = messagesLcResult.slice(messagesLc.length - 1);
-    this.session.append(sessionId, ...newMessages);
-    return content || "응답을 생성하지 못했습니다.";
   }
 }

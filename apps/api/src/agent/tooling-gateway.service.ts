@@ -25,11 +25,19 @@ export class ToolingGatewayService {
     return tools;
   }
 
-  async getLangChainTools(): Promise<{
+  async getLangChainTools(
+    extraTools: StructuredToolInterface[] = []
+  ): Promise<{
     tools: StructuredToolInterface[];
     close: () => Promise<void>;
   }> {
     const servers = this.mcpStore.findAll();
-    return this.mcpAdapter.getMcpToolsAsLangChain(servers);
+    const { tools, close } = await this.mcpAdapter.getMcpToolsAsLangChain(
+      servers
+    );
+    return {
+      tools: [...extraTools, ...tools],
+      close,
+    };
   }
 }

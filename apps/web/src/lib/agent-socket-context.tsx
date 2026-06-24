@@ -13,6 +13,13 @@ import {
 } from "react";
 import { io, type Socket } from "socket.io-client";
 import { useToolCallStore } from "@/stores/tool-call-store";
+import { getOrCreateUserId } from "@/lib/user-id";
+import {
+  createSession,
+  loadSessionMessages,
+  type SessionRecord,
+} from "@/lib/sessions-api";
+import { hydrateSessionMessages } from "@/lib/session-messages";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -37,20 +44,25 @@ export type AgentSocketEvent =
     };
 
 interface AgentSocketValue {
+  userId: string;
+  conversationId: string | null;
   connecting: boolean;
   connected: boolean;
   events: AgentSocketEvent[];
   loading: boolean;
   streamingContent: string;
   messages: ChatMessage[];
-  /** 현재 사용자 입력 한 줄만 전송. 히스토리는 백엔드 세션에서 관리. */
   sendChat: (userMessage: string, model?: string) => void;
+  startNewConversation: () => Promise<void>;
+  resumeConversation: (sessionId: string) => Promise<void>;
 }
 
 const AgentSocketContext = createContext<AgentSocketValue | null>(null);
 
 export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
+  const [userId] = useState(() => getOrCreateUserId());
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<AgentSocketEvent[]>([]);
@@ -58,11 +70,17 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const [streamingContent, setStreamingContent] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const streamingContentRef = useRef("");
+  const conversationIdRef = useRef<string | null>(null);
   const {
     addToolCalls,
     addToolMessage,
     reset: resetToolCallStore,
+    restore: restoreToolCallStore,
   } = useToolCallStore();
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   useEffect(() => {
     setConnecting(true);
@@ -85,11 +103,16 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setConnected(false);
     });
 
+    socket.on("session_created", (payload: { sessionId: string }) => {
+      // 서버가 새 세션을 만든 경우에만 적용 (사용자가 다른 대화를 선택한 뒤 덮어쓰지 않음)
+      if (!conversationIdRef.current) {
+        setConversationId(payload.sessionId);
+      }
+    });
+
     socket.on("agent_event", (event: AgentSocketEvent) => {
-      // 이벤트 로그는 그대로 누적
       setEvents((prev) => [...prev, event]);
 
-      // 단일 이벤트 단위로 툴콜/툴메시지/스트리밍/로딩 상태 처리
       switch (event.type) {
         case "tool_call":
           addToolCalls([event.toolCall as ToolCall]);
@@ -107,7 +130,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           });
           break;
         case "final_message":
-          // 최종 assistant 메시지를 고정 말풍선으로 messages에 추가
           setMessages((msgs) => [
             ...msgs,
             { role: "assistant", content: streamingContentRef.current },
@@ -122,7 +144,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, []);
+  }, [addToolCalls, addToolMessage]);
 
   const sendChat = useCallback(
     (userMessage: string, model?: string) => {
@@ -130,13 +152,18 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         throw new Error("소켓이 연결되지 않았습니다.");
       }
       setEvents([]);
+      resetToolCallStore();
       streamingContentRef.current = "";
       setStreamingContent("");
       setLoading(true);
-      // 사용자 메시지는 여기서 messages에 추가
       setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
       try {
-        socketRef.current.emit("chat", { userMessage, model });
+        socketRef.current.emit("chat", {
+          userMessage,
+          model,
+          userId,
+          conversationId: conversationIdRef.current ?? undefined,
+        });
       } catch (error) {
         setLoading(false);
         setMessages((prev) => [
@@ -150,12 +177,49 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         ]);
       }
     },
-    [resetToolCallStore]
+    [conversationId, resetToolCallStore, userId]
+  );
+
+  const startNewConversation = useCallback(async () => {
+    const session: SessionRecord = await createSession(userId);
+    conversationIdRef.current = session.id;
+    setConversationId(session.id);
+    setMessages([]);
+    setEvents([]);
+    resetToolCallStore();
+    streamingContentRef.current = "";
+    setStreamingContent("");
+    return session.id;
+  }, [resetToolCallStore, userId]);
+
+  const resumeConversation = useCallback(
+    async (sessionId: string) => {
+      conversationIdRef.current = sessionId;
+      setConversationId(sessionId);
+      setEvents([]);
+      resetToolCallStore();
+      streamingContentRef.current = "";
+      setStreamingContent("");
+      setLoading(false);
+
+      try {
+        const rows = await loadSessionMessages(sessionId);
+        const hydrated = await hydrateSessionMessages(rows);
+        setMessages(hydrated.chatMessages);
+        restoreToolCallStore(hydrated.toolCalls, hydrated.toolMessages);
+      } catch {
+        setMessages([]);
+        resetToolCallStore();
+      }
+    },
+    [resetToolCallStore, restoreToolCallStore]
   );
 
   return (
     <AgentSocketContext.Provider
       value={{
+        userId,
+        conversationId,
         connecting,
         connected,
         events,
@@ -163,6 +227,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         streamingContent,
         messages,
         sendChat,
+        startNewConversation,
+        resumeConversation,
       }}
     >
       {children}

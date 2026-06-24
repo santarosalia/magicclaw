@@ -3,15 +3,15 @@ import {
   MessageBody,
   SubscribeMessage,
   WebSocketGateway,
-  OnGatewayDisconnect,
 } from "@nestjs/websockets";
 import { Logger } from "@nestjs/common";
-import type { Server, Socket } from "socket.io";
+import type { Socket } from "socket.io";
 import { WebSocketServer } from "@nestjs/websockets";
-import { HumanMessage } from "langchain";
-import { AgentService } from "./agent.service.js";
-import { AgentChannel, AgentEvent } from "./agent.types";
-import { SessionService } from "../session/session.service.js";
+import { AgentChannel, type AgentEvent } from "./agent.types";
+import { SessionDbService } from "../session/session-db.service.js";
+import { UserScopeResolver } from "../user/user-scope.resolver.js";
+import { buildUserScope } from "../user/user-scope.js";
+import { TurnPipelineService } from "./turn-pipeline.service.js";
 
 @WebSocketGateway({
   namespace: "/agent",
@@ -19,19 +19,16 @@ import { SessionService } from "../session/session.service.js";
     origin: process.env.AGENT_WS_CORS_ORIGIN ?? process.env.WEB_ORIGIN ?? "*",
   },
 })
-export class AgentGateway implements OnGatewayDisconnect {
+export class AgentGateway {
   private readonly logger = new Logger(AgentGateway.name);
   @WebSocketServer()
-  server!: Server;
+  server!: import("socket.io").Server;
 
   constructor(
-    private readonly agent: AgentService,
-    private readonly session: SessionService
+    private readonly turnPipeline: TurnPipelineService,
+    private readonly sessionDb: SessionDbService,
+    private readonly userScopeResolver: UserScopeResolver
   ) {}
-
-  handleDisconnect(client: Socket): void {
-    this.session.delete(client.id);
-  }
 
   @SubscribeMessage("chat")
   async handleChat(
@@ -39,31 +36,52 @@ export class AgentGateway implements OnGatewayDisconnect {
     body: {
       userMessage: string;
       model?: string;
+      userId?: string;
+      conversationId?: string;
     },
     @ConnectedSocket() client: Socket
   ) {
     const userMessage = body.userMessage ?? "";
     if (!userMessage.trim()) return;
 
-    const history = this.session.get(client.id);
-    const userMsg = new HumanMessage({ content: userMessage.trim() });
-    const messagesLc = [...history, userMsg];
+    let userScope;
+    try {
+      userScope = this.userScopeResolver.resolve(AgentChannel.WEB, {
+        userId: body.userId,
+        conversationId: body.conversationId,
+      });
+    } catch {
+      client.emit("agent_error", { message: "userId가 필요합니다." });
+      return;
+    }
+
+    let sessionId = body.conversationId?.trim();
+    if (!sessionId) {
+      const created = this.sessionDb.createSession({
+        userId: userScope.userId,
+        channel: AgentChannel.WEB,
+      });
+      sessionId = created.id;
+      client.emit("session_created", { sessionId });
+    } else {
+      this.sessionDb.ensureSession(sessionId, {
+        userId: userScope.userId,
+        channel: AgentChannel.WEB,
+      });
+    }
 
     const onEvent = (event: AgentEvent) => {
       client.emit("agent_event", event);
     };
 
     try {
-      const messagesLcResult = await this.agent.chat(
-        {
-          messagesLc,
-          sessionId: client.id,
-          channel: AgentChannel.WEB,
-        },
-        onEvent
-      );
-      const newMessages = messagesLcResult.slice(messagesLc.length - 1);
-      this.session.append(client.id, ...newMessages);
+      await this.turnPipeline.runTurn({
+        sessionId,
+        channel: AgentChannel.WEB,
+        userScope: buildUserScope(userScope.userId, sessionId),
+        userText: userMessage.trim(),
+        onEvent,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       this.logger.error(`chat handling failed: ${message}`);

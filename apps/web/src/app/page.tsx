@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquare, Server, Brain, MessageCircle } from "lucide-react";
+import { MessageSquare, Server, Brain, MessageCircle, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,6 +20,22 @@ export default function Home() {
           <p className="text-muted-foreground mt-2">AI Agent with MCP</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                메모리
+              </CardTitle>
+              <CardDescription>
+                장기 메모리와 외부 provider를 설정합니다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/memory">메모리 설정</Link>
+              </Button>
+            </CardContent>
+          </Card>
           <Card className="transition-colors hover:bg-accent/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
