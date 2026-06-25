@@ -184,7 +184,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       }
 
       setEvents([]);
-      resetToolCallStore();
       streamingContentRef.current = "";
       setStreamingContent("");
       setLoading(true);
@@ -209,7 +208,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         ]);
       }
     },
-    [resetToolCallStore, userId]
+    [userId]
   );
 
   const clearCurrentConversation = useCallback(() => {

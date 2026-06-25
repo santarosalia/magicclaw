@@ -264,10 +264,13 @@ prefer interacting with the current browser page instead of using the generic se
 
     const emitToolCalls = (messages: BaseMessage[]) => {
       for (const message of messages) {
-        if (message instanceof AIMessageChunk && message.tool_calls) {
-          for (const toolCall of message.tool_calls) {
-            onEvent?.({ type: "tool_call", toolCall: toolCall as ToolCall });
-          }
+        if (
+          !(message instanceof AIMessage || message instanceof AIMessageChunk)
+        ) {
+          continue;
+        }
+        for (const toolCall of message.tool_calls ?? []) {
+          onEvent?.({ type: "tool_call", toolCall: toolCall as ToolCall });
         }
       }
     };
