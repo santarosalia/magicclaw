@@ -31,6 +31,7 @@ export default function ChatPage() {
     messages,
     sendChat,
     startNewConversation,
+    clearCurrentConversation,
     resumeConversation,
   } = useAgentSocket();
 
@@ -69,10 +70,14 @@ export default function ChatPage() {
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
+    const wasNew = !conversationId;
     setInput("");
     shouldScrollMessagesRef.current = true;
-    sendChat(text);
-  }, [input, loading, sendChat]);
+    await sendChat(text);
+    if (wasNew) {
+      await refreshSessions();
+    }
+  }, [conversationId, input, loading, refreshSessions, sendChat]);
 
   const handleNewChat = useCallback(async () => {
     await startNewConversation();
@@ -94,13 +99,19 @@ export default function ChatPage() {
 
   const handleDelete = useCallback(
     async (sessionId: string) => {
-      await deleteSession(sessionId);
-      if (conversationId === sessionId) {
-        await startNewConversation();
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      try {
+        await deleteSession(sessionId);
+        if (conversationId === sessionId) {
+          clearCurrentConversation();
+        }
+        await refreshSessions();
+      } catch (error) {
+        await refreshSessions();
+        throw error;
       }
-      await refreshSessions();
     },
-    [conversationId, refreshSessions, startNewConversation]
+    [clearCurrentConversation, conversationId, refreshSessions]
   );
 
   return (
@@ -147,10 +158,14 @@ export default function ChatPage() {
                     {s.title || "대화"}
                   </button>
                   <Button
+                    type="button"
                     size="icon"
                     variant="ghost"
-                    className="h-6 w-6"
-                    onClick={() => void handleDelete(s.id)}
+                    className="h-6 w-6 shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleDelete(s.id);
+                    }}
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -164,7 +179,7 @@ export default function ChatPage() {
           <CardContent className="flex-1 overflow-auto p-4 space-y-4">
             {messages.length === 0 && (
               <p className="text-muted-foreground text-sm text-center py-8">
-                메시지가 없습니다. 새 대화를 시작하거나 기존 대화를 선택하세요.
+                메시지를 입력하면 새 대화가 자동으로 시작됩니다.
               </p>
             )}
             {messages.map((m, i) => (

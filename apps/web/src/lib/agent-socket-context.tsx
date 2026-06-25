@@ -52,8 +52,9 @@ interface AgentSocketValue {
   loading: boolean;
   streamingContent: string;
   messages: ChatMessage[];
-  sendChat: (userMessage: string, model?: string) => void;
+  sendChat: (userMessage: string, model?: string) => Promise<void>;
   startNewConversation: () => Promise<void>;
+  clearCurrentConversation: () => void;
   resumeConversation: (sessionId: string) => Promise<void>;
 }
 
@@ -61,7 +62,7 @@ const AgentSocketContext = createContext<AgentSocketValue | null>(null);
 
 export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
-  const [userId] = useState(() => getOrCreateUserId());
+  const [userId, setUserId] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -77,6 +78,10 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     reset: resetToolCallStore,
     restore: restoreToolCallStore,
   } = useToolCallStore();
+
+  useEffect(() => {
+    setUserId(getOrCreateUserId());
+  }, []);
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -106,6 +111,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     socket.on("session_created", (payload: { sessionId: string }) => {
       // 서버가 새 세션을 만든 경우에만 적용 (사용자가 다른 대화를 선택한 뒤 덮어쓰지 않음)
       if (!conversationIdRef.current) {
+        conversationIdRef.current = payload.sessionId;
         setConversationId(payload.sessionId);
       }
     });
@@ -147,10 +153,36 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   }, [addToolCalls, addToolMessage]);
 
   const sendChat = useCallback(
-    (userMessage: string, model?: string) => {
+    async (userMessage: string, model?: string) => {
       if (!socketRef.current) {
         throw new Error("소켓이 연결되지 않았습니다.");
       }
+      if (!userId) {
+        throw new Error("사용자 정보를 불러오는 중입니다.");
+      }
+
+      let activeSessionId = conversationIdRef.current;
+      if (!activeSessionId) {
+        try {
+          const session = await createSession(userId);
+          activeSessionId = session.id;
+          conversationIdRef.current = activeSessionId;
+          setConversationId(activeSessionId);
+        } catch (error) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "user", content: userMessage },
+            {
+              role: "assistant",
+              content:
+                "오류: " +
+                (error instanceof Error ? error.message : String(error)),
+            },
+          ]);
+          return;
+        }
+      }
+
       setEvents([]);
       resetToolCallStore();
       streamingContentRef.current = "";
@@ -162,7 +194,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           userMessage,
           model,
           userId,
-          conversationId: conversationIdRef.current ?? undefined,
+          conversationId: activeSessionId,
         });
       } catch (error) {
         setLoading(false);
@@ -177,8 +209,19 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         ]);
       }
     },
-    [conversationId, resetToolCallStore, userId]
+    [resetToolCallStore, userId]
   );
+
+  const clearCurrentConversation = useCallback(() => {
+    conversationIdRef.current = null;
+    setConversationId(null);
+    setMessages([]);
+    setEvents([]);
+    resetToolCallStore();
+    streamingContentRef.current = "";
+    setStreamingContent("");
+    setLoading(false);
+  }, [resetToolCallStore]);
 
   const startNewConversation = useCallback(async () => {
     const session: SessionRecord = await createSession(userId);
@@ -228,6 +271,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         messages,
         sendChat,
         startNewConversation,
+        clearCurrentConversation,
         resumeConversation,
       }}
     >
