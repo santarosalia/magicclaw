@@ -33,7 +33,7 @@ export class MemoryManagerService {
     }
 
     if (config.provider) {
-      const provider = createMemoryProvider(config.provider);
+      const provider = createMemoryProvider(config.provider, config);
       if (!provider) {
         this.logger.warn(`Unknown memory provider: ${config.provider}`);
       } else if (!provider.isAvailable()) {

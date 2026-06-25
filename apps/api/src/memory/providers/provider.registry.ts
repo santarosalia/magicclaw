@@ -1,15 +1,21 @@
+import type { MemoryConfig } from "../../store/memory-config-store.service.js";
 import type { MemoryProvider } from "../memory-provider.interface.js";
 import { Mem0MemoryProvider } from "./mem0.provider.js";
 
-export type MemoryProviderFactory = () => MemoryProvider;
+export type MemoryProviderFactory = (
+  memoryConfig?: MemoryConfig
+) => MemoryProvider;
 
 const BUNDLED_PROVIDERS: Record<string, MemoryProviderFactory> = {
-  mem0: () => new Mem0MemoryProvider(),
+  mem0: (memoryConfig) => new Mem0MemoryProvider(memoryConfig?.mem0),
 };
 
-export function createMemoryProvider(name: string): MemoryProvider | null {
+export function createMemoryProvider(
+  name: string,
+  memoryConfig?: MemoryConfig
+): MemoryProvider | null {
   const factory = BUNDLED_PROVIDERS[name];
-  return factory ? factory() : null;
+  return factory ? factory(memoryConfig) : null;
 }
 
 export function listBundledProviderNames(): string[] {

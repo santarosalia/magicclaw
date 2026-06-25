@@ -1,5 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { FileStoreService } from "../common/file-store.service.js";
+import {
+  defaultMem0OssConfig,
+  type Mem0ProviderConfig,
+} from "../memory/providers/mem0-config.js";
 
 export interface MemoryConfig {
   memoryEnabled: boolean;
@@ -8,9 +12,7 @@ export interface MemoryConfig {
   userCharLimit: number;
   maxContextMessages: number;
   provider: string;
-  mem0?: {
-    apiKeyEnv?: string;
-  };
+  mem0?: Mem0ProviderConfig;
 }
 
 const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -20,7 +22,13 @@ const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   userCharLimit: 1375,
   maxContextMessages: 40,
   provider: "",
-  mem0: { apiKeyEnv: "MEM0_API_KEY" },
+  mem0: {
+    mode: "platform",
+    apiKeyEnv: "MEM0_API_KEY",
+    agentId: "magicclaw",
+    rerank: true,
+    oss: defaultMem0OssConfig(),
+  },
 };
 
 @Injectable()
