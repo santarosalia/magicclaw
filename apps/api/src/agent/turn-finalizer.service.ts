@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import type { BaseMessage } from "langchain";
 import { SessionService } from "../session/session.service.js";
 import { MemoryManagerService } from "../memory/memory-manager.service.js";
+import { CuratorService } from "../skills/curator.service.js";
 import { getMessageContentAsString } from "./agent.types.js";
 import type { TurnContext } from "./turn-context.service.js";
 
@@ -16,7 +17,8 @@ export interface TurnResult {
 export class TurnFinalizerService {
   constructor(
     private readonly session: SessionService,
-    private readonly memoryManager: MemoryManagerService
+    private readonly memoryManager: MemoryManagerService,
+    private readonly curator: CuratorService
   ) {}
 
   async finalize(
@@ -53,6 +55,9 @@ export class TurnFinalizerService {
       messages: result.messages,
     });
     this.memoryManager.queuePrefetchAll(ctx.userText, ctx.sessionId);
+
+    this.curator.recordTurnFinished();
+    void this.curator.maybeRunCurator();
 
     return {
       content: content || "응답을 생성하지 못했습니다.",

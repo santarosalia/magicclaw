@@ -9,6 +9,8 @@ export interface AgentChatOptions {
   userScope: UserScope;
   memoryContext?: string;
   systemMemoryBlock?: string;
+  contextFilesBlock?: string;
+  skillsIndexBlock?: string;
   refreshMemoryBlocks?: () => {
     systemMemoryBlock: string;
     memoryContext: string;

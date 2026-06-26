@@ -7,6 +7,8 @@ import { McpModule } from "../mcp/mcp.module.js";
 import { SessionModule } from "../session/session.module.js";
 import { MemoryModule } from "../memory/memory.module.js";
 import { UserModule } from "../user/user.module.js";
+import { SkillsModule } from "../skills/skills.module.js";
+import { ContextFilesService } from "../common/context-files.service.js";
 import { ModelFactoryService } from "./model-factory.service.js";
 import { ToolingGatewayService } from "./tooling-gateway.service.js";
 import { ConversationRunnerService } from "./conversation-runner.service.js";
@@ -19,10 +21,11 @@ import { TodoStoreService } from "./todo-store.service.js";
 import { CHAT_ORCHESTRATOR } from "../messenger/chat-orchestrator.port.js";
 
 @Module({
-  imports: [StoreModule, McpModule, SessionModule, MemoryModule, UserModule],
+  imports: [StoreModule, McpModule, SessionModule, MemoryModule, UserModule, SkillsModule],
   controllers: [AgentController],
   providers: [
     AgentService,
+    ContextFilesService,
     ModelFactoryService,
     ToolingGatewayService,
     ConversationRunnerService,

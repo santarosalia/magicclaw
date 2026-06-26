@@ -32,6 +32,8 @@ import {
   isContextLengthError,
   shrinkMessagesToBudget,
 } from "./context-budget.util.js";
+import { MEMORY_GUIDANCE } from "../memory/memory-guidance.js";
+import { SKILLS_GUIDANCE } from "../skills/skills-guidance.js";
 
 const AgentStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -42,6 +44,8 @@ const AgentStateAnnotation = Annotation.Root({
   channel: Annotation<AgentChannel>(),
   memoryContext: Annotation<string>(),
   systemMemoryBlock: Annotation<string>(),
+  contextFilesBlock: Annotation<string>(),
+  skillsIndexBlock: Annotation<string>(),
   apiCallCount: Annotation<number>({
     reducer: (_, next) => next,
     default: () => 0,
@@ -79,14 +83,28 @@ You have access to tools (via MCP) to perform actions when necessary.
 Always reason about the user's intent and choose whether tools are actually needed.
 Reply in the same language as the user when appropriate.
 For multi-step tasks, use the todo tool to track progress before executing tools.
-When the user shares their name, preferences, or other profile facts, persist them with the memory tool (target "user") before replying.
 On every new conversation, read USER PROFILE and AGENT MEMORY sections in your instructions and <memory-context> blocks — they are authoritative across sessions.
+Use session_search to recall prior conversations when the user asks about past work.
+Before tasks that match an installed skill, use skill_manage(action="read") to load the playbook.
 If a browser tab is already open and the user asks to search,
-prefer interacting with the current browser page instead of using the generic search tool.`;
+prefer interacting with the current browser page instead of using the generic search tool.
 
-  private buildSystemPrompt(memoryBlock?: string): string {
-    if (!memoryBlock?.trim()) return this.baseSystemPrompt;
-    return `${this.baseSystemPrompt}\n\n${memoryBlock}`;
+${MEMORY_GUIDANCE}
+
+${SKILLS_GUIDANCE}`;
+
+  private buildSystemPrompt(
+    memoryBlock?: string,
+    contextFilesBlock?: string,
+    skillsIndexBlock?: string
+  ): string {
+    const parts = [
+      this.baseSystemPrompt,
+      contextFilesBlock?.trim(),
+      skillsIndexBlock?.trim(),
+      memoryBlock?.trim(),
+    ].filter(Boolean);
+    return parts.join("\n\n");
   }
 
   private async invokeWithContextGuard(
@@ -198,7 +216,11 @@ prefer interacting with the current browser page instead of using the generic se
         };
       }
 
-      const systemPrompt = this.buildSystemPrompt(state.systemMemoryBlock);
+      const systemPrompt = this.buildSystemPrompt(
+        state.systemMemoryBlock,
+        state.contextFilesBlock,
+        state.skillsIndexBlock
+      );
       const apiMessages = this.injectEphemeralContext(
         state.messages,
         state.memoryContext
@@ -293,6 +315,8 @@ prefer interacting with the current browser page instead of using the generic se
         channel: options.channel,
         memoryContext: options.memoryContext ?? "",
         systemMemoryBlock: options.systemMemoryBlock ?? "",
+        contextFilesBlock: options.contextFilesBlock ?? "",
+        skillsIndexBlock: options.skillsIndexBlock ?? "",
       },
       {
         streamMode: ["updates", "messages", "values"],

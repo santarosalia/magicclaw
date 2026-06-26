@@ -79,6 +79,115 @@ export class BuiltinCuratedStore {
     return target === "user" ? [...this.userEntries] : [...this.memoryEntries];
   }
 
+  applyBatch(
+    target: MemoryTarget,
+    operations: Array<{
+      action: "add" | "replace" | "remove";
+      content?: string;
+      old_text?: string;
+    }>
+  ): MemoryMutationResult {
+    if (!operations.length) {
+      return { success: false, error: "operations list is empty." };
+    }
+
+    const working = [...this.entriesFor(target)];
+    const limit = this.charLimit(target);
+
+    for (let i = 0; i < operations.length; i++) {
+      const op = operations[i];
+      const pos = `Operation ${i + 1} (${op.action})`;
+      const content = op.content?.trim() ?? "";
+      const oldText = op.old_text?.trim() ?? "";
+
+      if (op.action === "add") {
+        if (!content) {
+          return this.batchError(target, `${pos}: content is required.`);
+        }
+        if (!working.includes(content)) working.push(content);
+        continue;
+      }
+
+      if (op.action === "replace") {
+        if (!oldText) {
+          return this.batchError(target, `${pos}: old_text is required.`);
+        }
+        if (!content) {
+          return this.batchError(
+            target,
+            `${pos}: content is required (use remove to delete).`
+          );
+        }
+        const matches = working
+          .map((entry, index) => ({ entry, index }))
+          .filter(({ entry }) => entry.includes(oldText));
+        if (matches.length === 0) {
+          return this.batchError(target, `${pos}: no entry matched '${oldText}'.`);
+        }
+        if (new Set(matches.map(({ entry }) => entry)).size > 1) {
+          return this.batchError(
+            target,
+            `${pos}: '${oldText}' matched multiple entries — be more specific.`
+          );
+        }
+        working[matches[0].index] = content;
+        continue;
+      }
+
+      if (op.action === "remove") {
+        if (!oldText) {
+          return this.batchError(target, `${pos}: old_text is required.`);
+        }
+        const matches = working
+          .map((entry, index) => ({ entry, index }))
+          .filter(({ entry }) => entry.includes(oldText));
+        if (matches.length === 0) {
+          return this.batchError(target, `${pos}: no entry matched '${oldText}'.`);
+        }
+        if (new Set(matches.map(({ entry }) => entry)).size > 1) {
+          return this.batchError(
+            target,
+            `${pos}: '${oldText}' matched multiple entries — be more specific.`
+          );
+        }
+        working.splice(matches[0].index, 1);
+        continue;
+      }
+
+      return this.batchError(
+        target,
+        `${pos}: unknown action. Use add, replace, or remove.`
+      );
+    }
+
+    const newTotal = this.joinEntries(working).length;
+    if (newTotal > limit) {
+      return {
+        success: false,
+        error: `After applying all ${operations.length} operations, memory would be at ${newTotal}/${limit} chars — over the limit. Remove or shorten more entries in the same batch.`,
+        currentEntries: this.entriesFor(target),
+        usage: `${this.charCount(target)}/${limit}`,
+      };
+    }
+
+    this.setEntries(target, working);
+    this.saveToDisk(target);
+    return this.successResponse(
+      target,
+      `Applied ${operations.length} operation(s).`
+    );
+  }
+
+  private batchError(target: MemoryTarget, message: string): MemoryMutationResult {
+    const limit = this.charLimit(target);
+    return {
+      success: false,
+      error: `${message} No operations were applied (batch is all-or-nothing).`,
+      currentEntries: this.entriesFor(target),
+      usage: `${this.charCount(target)}/${limit}`,
+    };
+  }
+
   add(target: MemoryTarget, content: string): MemoryMutationResult {
     const trimmed = content.trim();
     if (!trimmed) return { success: false, error: "Content cannot be empty." };
@@ -183,7 +292,10 @@ export class BuiltinCuratedStore {
   private renderBlock(target: MemoryTarget, entries: string[]): string {
     if (entries.length === 0) return "";
     const label = target === "user" ? "USER PROFILE" : "AGENT MEMORY";
-    return `## ${label}\n${entries.join("\n\n")}`;
+    const limit = this.charLimit(target);
+    const used = this.joinEntries(entries).length;
+    const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+    return `## ${label} [${pct}% — ${used}/${limit} chars]\n${entries.join("\n\n")}`;
   }
 
   private pathFor(target: MemoryTarget): string {

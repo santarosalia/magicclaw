@@ -7,7 +7,7 @@ import { BackgroundQueue } from "./background-queue.js";
 import { createMemoryTool } from "./memory-tool.factory.js";
 import type { DynamicStructuredTool } from "@langchain/core/tools";
 import { createMemoryProvider } from "./providers/provider.registry.js";
-import { extractProfileFacts } from "./builtin-user-facts.util.js";
+import { extractMemoryTarget, extractProfileFacts } from "./builtin-user-facts.util.js";
 import { turnWroteBuiltinMemory } from "./builtin-turn-sync.util.js";
 
 @Injectable()
@@ -92,8 +92,9 @@ export class MemoryManagerService {
     const facts = extractProfileFacts(input.userContent);
     if (facts.length === 0) return;
 
+    const target = extractMemoryTarget(input.userContent);
     for (const fact of facts) {
-      const result = store.add("user", fact);
+      const result = store.add(target, fact);
       if (!result.success) {
         this.logger.debug(
           `builtin auto-ingest skipped: ${result.error ?? "unknown"}`

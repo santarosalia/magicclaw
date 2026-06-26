@@ -11,6 +11,7 @@ import { AgentChannel } from "../agent/agent.types.js";
 import type { BaseMessage } from "langchain";
 import type { CreateSessionInput, SessionRecord } from "./session.types.js";
 import { deserializeMessages } from "./message-serializer.js";
+import { extractSearchableText } from "./message-text.util.js";
 
 type SessionRow = {
   id: string;
@@ -19,6 +20,21 @@ type SessionRow = {
   title: string | null;
   created_at: number;
   updated_at: number;
+};
+
+type MessageRow = {
+  id: number;
+  session_id: string;
+  role: string;
+  content: string;
+  search_text: string | null;
+  created_at: number;
+};
+
+export type MessageHit = {
+  session_id: string;
+  message_id: number;
+  snippet: string;
 };
 
 @Injectable()
@@ -48,8 +64,83 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
-      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, session_id);
     `);
+    this.ensureSearchTextColumn();
+    this.ensureFtsTable();
+    this.backfillSearchText();
+  }
+
+  private ensureSearchTextColumn(): void {
+    const cols = this.getDb()
+      .prepare(`PRAGMA table_info(messages)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "search_text")) {
+      this.getDb().exec(`ALTER TABLE messages ADD COLUMN search_text TEXT`);
+    }
+  }
+
+  private ensureFtsTable(): void {
+    const db = this.getDb();
+    const ftsExists = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`
+      )
+      .get() as { name?: string } | undefined;
+
+    if (!ftsExists) {
+      db.exec(
+        `CREATE VIRTUAL TABLE messages_fts USING fts5(search_text, session_id, message_id UNINDEXED)`
+      );
+      return;
+    }
+
+    const ftsInfo = db
+      .prepare(`PRAGMA table_info(messages_fts)`)
+      .all() as Array<{ name: string }>;
+    if (!ftsInfo.some((c) => c.name === "search_text")) {
+      db.exec(`DROP TABLE IF EXISTS messages_fts`);
+      db.exec(
+        `CREATE VIRTUAL TABLE messages_fts USING fts5(search_text, session_id, message_id UNINDEXED)`
+      );
+    }
+  }
+
+  private backfillSearchText(): void {
+    const db = this.getDb();
+    const rows = db
+      .prepare(
+        `SELECT id, session_id, role, content, search_text FROM messages WHERE search_text IS NULL OR search_text = ''`
+      )
+      .all() as Array<{
+      id: number;
+      session_id: string;
+      role: string;
+      content: string;
+      search_text: string | null;
+    }>;
+
+    if (rows.length === 0) return;
+
+    this.runInTransaction(() => {
+      const update = db.prepare(
+        `UPDATE messages SET search_text = ? WHERE id = ?`
+      );
+      const ftsDelete = db.prepare(
+        `DELETE FROM messages_fts WHERE message_id = ?`
+      );
+      const ftsInsert = db.prepare(
+        `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
+      );
+
+      for (const row of rows) {
+        const searchText = this.deriveSearchText(row.content, row.role);
+        update.run(searchText, row.id);
+        ftsDelete.run(row.id);
+        if (searchText.trim()) {
+          ftsInsert.run(searchText, row.session_id, row.id);
+        }
+      }
+    });
   }
 
   onModuleDestroy(): void {
@@ -130,17 +221,27 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
 
       const insert = db.prepare(
-        `INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`
+        `INSERT INTO messages (session_id, role, content, search_text, created_at) VALUES (?, ?, ?, ?, ?)`
       );
       const fts = db.prepare(
-        `INSERT INTO messages_fts (content, session_id) VALUES (?, ?)`
+        `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
       );
       const now = Date.now();
 
       for (const message of messages) {
         const serialized = JSON.stringify(message.toJSON());
-        insert.run(sessionId, message.getType(), serialized, now);
-        fts.run(serialized, sessionId);
+        const searchText = extractSearchableText(message);
+        const result = insert.run(
+          sessionId,
+          message.getType(),
+          serialized,
+          searchText,
+          now
+        );
+        const messageId = Number(result.lastInsertRowid);
+        if (searchText.trim()) {
+          fts.run(searchText, sessionId, messageId);
+        }
       }
 
       db.prepare(`UPDATE sessions SET updated_at = ? WHERE id = ?`).run(
@@ -156,17 +257,27 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     this.runInTransaction(() => {
       const db = this.getDb();
       const insert = db.prepare(
-        `INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`
+        `INSERT INTO messages (session_id, role, content, search_text, created_at) VALUES (?, ?, ?, ?, ?)`
       );
       const fts = db.prepare(
-        `INSERT INTO messages_fts (content, session_id) VALUES (?, ?)`
+        `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
       );
       const now = Date.now();
 
       for (const message of messages) {
         const serialized = JSON.stringify(message.toJSON());
-        insert.run(sessionId, message.getType(), serialized, now);
-        fts.run(serialized, sessionId);
+        const searchText = extractSearchableText(message);
+        const result = insert.run(
+          sessionId,
+          message.getType(),
+          serialized,
+          searchText,
+          now
+        );
+        const messageId = Number(result.lastInsertRowid);
+        if (searchText.trim()) {
+          fts.run(searchText, sessionId, messageId);
+        }
       }
 
       db.prepare(`UPDATE sessions SET updated_at = ? WHERE id = ?`).run(
@@ -189,6 +300,156 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       .all(userId, query) as SessionRow[];
 
     return rows.map((r) => this.toSessionRecord(r));
+  }
+
+  searchMessageHits(
+    userId: string,
+    query: string,
+    limit: number
+  ): MessageHit[] {
+    const rows = this.getDb()
+      .prepare(
+        `SELECT f.session_id, f.message_id,
+                snippet(messages_fts, 0, '**', '**', '…', 24) AS snippet
+         FROM messages_fts f
+         JOIN sessions s ON s.id = f.session_id
+         WHERE s.user_id = ? AND messages_fts MATCH ?
+         ORDER BY s.updated_at DESC
+         LIMIT ?`
+      )
+      .all(userId, query, limit) as Array<{
+      session_id: string;
+      message_id: number;
+      snippet: string;
+    }>;
+
+    return rows.map((r) => ({
+      session_id: r.session_id,
+      message_id: r.message_id,
+      snippet: r.snippet,
+    }));
+  }
+
+  listMessageRows(sessionId: string): MessageRow[] {
+    return this.getDb()
+      .prepare(
+        `SELECT id, session_id, role, content, search_text, created_at
+         FROM messages WHERE session_id = ? ORDER BY id ASC`
+      )
+      .all(sessionId) as MessageRow[];
+  }
+
+  getMessagesAround(
+    sessionId: string,
+    anchorId: number,
+    window: number
+  ): {
+    messages: MessageRow[];
+    beforeCount: number;
+    afterCount: number;
+  } {
+    const db = this.getDb();
+    const before = db
+      .prepare(
+        `SELECT id, session_id, role, content, search_text, created_at
+         FROM messages
+         WHERE session_id = ? AND id < ?
+         ORDER BY id DESC
+         LIMIT ?`
+      )
+      .all(sessionId, anchorId, window) as MessageRow[];
+
+    const anchor = db
+      .prepare(
+        `SELECT id, session_id, role, content, search_text, created_at
+         FROM messages WHERE session_id = ? AND id = ?`
+      )
+      .get(sessionId, anchorId) as MessageRow | undefined;
+
+    const after = db
+      .prepare(
+        `SELECT id, session_id, role, content, search_text, created_at
+         FROM messages
+         WHERE session_id = ? AND id > ?
+         ORDER BY id ASC
+         LIMIT ?`
+      )
+      .all(sessionId, anchorId, window) as MessageRow[];
+
+    const messages = [
+      ...before.reverse(),
+      ...(anchor ? [anchor] : []),
+      ...after,
+    ];
+
+    return {
+      messages,
+      beforeCount: before.length,
+      afterCount: after.length,
+    };
+  }
+
+  getConversationBookend(
+    sessionId: string,
+    end: "start" | "end",
+    limit: number
+  ): MessageRow[] {
+    const order = end === "start" ? "ASC" : "DESC";
+    const rows = this.getDb()
+      .prepare(
+        `SELECT id, session_id, role, content, search_text, created_at
+         FROM messages
+         WHERE session_id = ? AND role IN ('human', 'user', 'ai', 'assistant')
+         ORDER BY id ${order}
+         LIMIT ?`
+      )
+      .all(sessionId, limit) as MessageRow[];
+
+    return end === "start" ? rows : rows.reverse();
+  }
+
+  getSessionPreview(sessionId: string, maxChars: number): string {
+    const row = this.getDb()
+      .prepare(
+        `SELECT search_text FROM messages
+         WHERE session_id = ? AND search_text IS NOT NULL AND search_text != ''
+         ORDER BY id DESC LIMIT 1`
+      )
+      .get(sessionId) as { search_text: string } | undefined;
+
+    const text = row?.search_text ?? "";
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars)}…`;
+  }
+
+  private deriveSearchText(content: string, role: string): string {
+    try {
+      const parsed = JSON.parse(content) as {
+        type?: string;
+        kwargs?: { content?: unknown };
+        content?: unknown;
+      };
+      const msgRole = parsed.type ?? role;
+      const raw = parsed.kwargs?.content ?? parsed.content;
+      if (typeof raw === "string") {
+        return raw.trim() ? `${msgRole}: ${raw.trim()}` : "";
+      }
+      if (Array.isArray(raw)) {
+        const text = raw
+          .filter(
+            (x): x is { type?: string; text?: string } =>
+              typeof x === "object" && x !== null
+          )
+          .filter((x) => x.type === "text" && typeof x.text === "string")
+          .map((x) => x.text)
+          .join("");
+        return text.trim() ? `${msgRole}: ${text.trim()}` : "";
+      }
+    } catch {
+      // fall through
+    }
+    const trimmed = content.trim();
+    return trimmed ? `${role}: ${trimmed}` : "";
   }
 
   private toSessionRecord(row: SessionRow): SessionRecord {

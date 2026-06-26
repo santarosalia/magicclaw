@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquare, Server, Brain, MessageCircle, Database } from "lucide-react";
+import { MessageSquare, Server, Brain, MessageCircle, Database, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -77,6 +77,22 @@ export default function Home() {
             <CardContent>
               <Button asChild variant="outline" className="w-full">
                 <Link href="/mcp">MCP 서버 관리</Link>
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="transition-colors hover:bg-accent/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                스킬
+              </CardTitle>
+              <CardDescription>
+                Hub 설치, curator, 에이전트 플레이북을 관리합니다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/skills">스킬 관리</Link>
               </Button>
             </CardContent>
           </Card>

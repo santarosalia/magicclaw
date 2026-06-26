@@ -30,6 +30,8 @@ export class TurnPipelineService {
         userScope: ctx.userScope,
         memoryContext: ctx.memoryContext,
         systemMemoryBlock: ctx.systemMemoryBlock,
+        contextFilesBlock: ctx.contextFilesBlock,
+        skillsIndexBlock: ctx.skillsIndexBlock,
       },
       input.onEvent
     );

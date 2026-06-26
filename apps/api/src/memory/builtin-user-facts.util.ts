@@ -1,4 +1,4 @@
-/** 사용자 발화에서 프로필 사실을 추출 (memory tool 미호출 시 백업용). */
+/** 사용자 발화에서 프로필·선호·교정 사실 추출 (memory tool 미호출 시 백업용). */
 export function extractProfileFacts(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -9,6 +9,8 @@ export function extractProfileFacts(text: string): string[] {
     /(?:my name is|call me|i am|i'm)\s+([A-Za-z][A-Za-z0-9\s'-]{0,40})/i,
     /(?:나는|저는)\s+([^\s.,!?。\n]{1,40})\s*(?:이야|입니다|예요|이에요)/,
     /(?:remember|기억해(?:\s*줘)?)[:\s]+(.+)/i,
+    /(?:i prefer|i'd prefer|선호(?:해|하는|합니다)?)[:\s]*(.+)/i,
+    /(?:(?:don't|do not|never|하지\s*마|쓰지\s*마|말\s*마)[:\s]+(.+))/i,
   ];
 
   for (const pattern of patterns) {
@@ -22,6 +24,18 @@ export function extractProfileFacts(text: string): string[] {
   return [...new Set(facts)];
 }
 
+export function extractMemoryTarget(text: string): "user" | "memory" {
+  const trimmed = text.trim();
+  if (
+    /(?:don't|do not|never|하지\s*마|쓰지\s*마|말\s*마|correction|수정)/i.test(
+      trimmed
+    )
+  ) {
+    return "memory";
+  }
+  return "user";
+}
+
 function normalizeFact(pattern: RegExp, captured: string, full: string): string {
   if (pattern.source.includes("이름")) {
     return `User's name is ${captured}.`;
@@ -31,6 +45,12 @@ function normalizeFact(pattern: RegExp, captured: string, full: string): string 
   }
   if (pattern.source.includes("remember|기억")) {
     return captured.endsWith(".") ? captured : `${captured}.`;
+  }
+  if (/prefer|선호/i.test(pattern.source)) {
+    return `User prefers: ${captured.endsWith(".") ? captured : `${captured}.`}`;
+  }
+  if (/don't|do not|never|하지|쓰지|말\s*마/i.test(pattern.source)) {
+    return `User correction: ${captured.endsWith(".") ? captured : `${captured}.`}`;
   }
   if (pattern.source.includes("나는|저는")) {
     return `User identifies as: ${captured}.`;

@@ -49,4 +49,28 @@ describe("BuiltinCuratedStore", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("applyBatch removes and adds atomically within char limit", () => {
+    const home = mkdtempSync(join(tmpdir(), "magicclaw-mem-"));
+    const prev = process.env.MAGICCLAW_HOME;
+    process.env.MAGICCLAW_HOME = home;
+
+    try {
+      const store = new BuiltinCuratedStore("user-a", 200, 200, true, true);
+      store.loadFromDisk();
+      store.add("memory", "Old convention about tabs.");
+      const result = store.applyBatch("memory", [
+        { action: "remove", old_text: "Old convention" },
+        { action: "add", content: "Project uses spaces, width 2." },
+      ]);
+      expect(result.success).toBe(true);
+      expect(store.getLiveEntries("memory")).toEqual([
+        "Project uses spaces, width 2.",
+      ]);
+    } finally {
+      if (prev === undefined) delete process.env.MAGICCLAW_HOME;
+      else process.env.MAGICCLAW_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

@@ -5,6 +5,11 @@ import { ToolingGatewayService } from "./tooling-gateway.service.js";
 import { MemoryManagerService } from "../memory/memory-manager.service.js";
 import { TodoStoreService } from "./todo-store.service.js";
 import { createTodoTool } from "./todo-tool.factory.js";
+import { SessionSearchService } from "../session/session-search.service.js";
+import { createSessionSearchTool } from "../session/session-search-tool.factory.js";
+import { SkillStoreService } from "../skills/skill-store.service.js";
+import { createSkillManageTool } from "../skills/skill-manage-tool.factory.js";
+import { SkillsHubService } from "../skills/skills-hub.service.js";
 import type { AgentChatOptions, AgentEvent } from "./agent.types.js";
 
 @Injectable()
@@ -14,7 +19,10 @@ export class AgentService {
     private readonly toolingGateway: ToolingGatewayService,
     private readonly conversationRunner: ConversationRunnerService,
     private readonly memoryManager: MemoryManagerService,
-    private readonly todoStore: TodoStoreService
+    private readonly todoStore: TodoStoreService,
+    private readonly sessionSearch: SessionSearchService,
+    private readonly skillStore: SkillStoreService,
+    private readonly skillsHub: SkillsHubService
   ) {}
 
   async getMcpToolsList(): Promise<{ name: string; description?: string }[]> {
@@ -27,7 +35,16 @@ export class AgentService {
       options.userScope.userId
     );
     const todoTool = createTodoTool(options.sessionId, this.todoStore);
-    const extraTools = [todoTool, memoryTool];
+    const sessionSearchTool = createSessionSearchTool(
+      options.userScope.userId,
+      options.sessionId,
+      this.sessionSearch
+    );
+    const skillManageTool = createSkillManageTool(
+      this.skillStore,
+      this.skillsHub
+    );
+    const extraTools = [todoTool, memoryTool, sessionSearchTool, skillManageTool];
 
     const { tools, close } = await this.toolingGateway.getLangChainTools(
       extraTools
