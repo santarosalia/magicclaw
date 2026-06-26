@@ -1,7 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { McpServerConfig, McpToolInfo } from "./dto/mcp-server.dto.js";
-import { McpAdapterConnectionPool } from "./mcp-adapter.pool.js";
+import {
+  McpAdapterConnectionPool,
+  SH_TOOL_NAME,
+} from "./mcp-adapter.pool.js";
+import { formatMcpConnectionError } from "./mcp-connection-error.util.js";
 
 export interface ListToolsResult {
   tools: McpToolInfo[];
@@ -19,24 +23,25 @@ export interface CallToolResult {
 function langChainToolsToMcpToolInfo(
   tools: StructuredToolInterface[]
 ): McpToolInfo[] {
-  return tools.map((t) => ({
-    name: t.name,
-    description: typeof t.description === "string" ? t.description : undefined,
-    inputSchema:
-      typeof (t as { schema?: unknown }).schema === "object"
-        ? ((t as { schema: Record<string, unknown> }).schema as Record<
-            string,
-            unknown
-          >)
-        : undefined,
-  }));
+  return tools
+    .filter((tool) => tool.name !== SH_TOOL_NAME)
+    .map((tool) => ({
+      name: tool.name,
+      description:
+        typeof tool.description === "string" ? tool.description : undefined,
+      inputSchema:
+        typeof (tool as { schema?: unknown }).schema === "object"
+          ? ((tool as { schema: Record<string, unknown> }).schema as Record<
+              string,
+              unknown
+            >)
+          : undefined,
+    }));
 }
 
 @Injectable()
 export class McpAdapterService {
-  constructor(
-    private readonly pool: McpAdapterConnectionPool
-  ) {}
+  constructor(private readonly pool: McpAdapterConnectionPool) {}
 
   async getMcpToolsAsLangChain(
     servers: McpServerConfig[]
@@ -44,16 +49,14 @@ export class McpAdapterService {
     tools: StructuredToolInterface[];
     close: () => Promise<void>;
   }> {
-    if (servers.length === 0) {
-      return { tools: [], close: async () => {} };
-    }
-
-    const { tools, release } = await this.pool.get(servers);
+    const result = await this.pool.connect(servers, {
+      includeShTool: true,
+      allowCache: true,
+      strict: false,
+    });
     return {
-      tools,
-      close: async () => {
-        release();
-      },
+      tools: result.tools,
+      close: result.close,
     };
   }
 
@@ -61,15 +64,28 @@ export class McpAdapterService {
     config: McpServerConfig
   ): Promise<ListToolsResult> {
     try {
-      const { tools, close } = await this.getMcpToolsAsLangChain([config]);
-      await close();
-      return {
-        tools: langChainToolsToMcpToolInfo(tools),
-      };
+      const result = await this.pool.connect([config], {
+        strict: true,
+        includeShTool: false,
+        allowCache: false,
+      });
+      await result.close();
+
+      const tools = langChainToolsToMcpToolInfo(result.tools);
+      if (tools.length === 0) {
+        return {
+          tools: [],
+          error:
+            result.errors[0] ??
+            "MCP 서버에서 도구를 불러오지 못했습니다. URL, 전송 방식, Authorization 헤더를 확인하세요.",
+        };
+      }
+
+      return { tools };
     } catch (err) {
       return {
         tools: [],
-        error: err instanceof Error ? err.message : String(err),
+        error: formatMcpConnectionError(err),
       };
     }
   }
@@ -96,8 +112,8 @@ export class McpAdapterService {
         typeof result === "string"
           ? result
           : typeof result === "object" && result !== null && "content" in result
-          ? String((result as { content: unknown }).content)
-          : JSON.stringify(result);
+            ? String((result as { content: unknown }).content)
+            : JSON.stringify(result);
 
       return {
         content: [{ type: "text" as const, text }],
@@ -118,4 +134,3 @@ export class McpAdapterService {
     }
   }
 }
-

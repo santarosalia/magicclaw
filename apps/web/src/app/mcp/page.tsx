@@ -37,6 +37,9 @@ export default function McpPage() {
   const [toolsByServer, setToolsByServer] = useState<
     Record<string, ToolItem[]>
   >({});
+  const [toolErrorsByServer, setToolErrorsByServer] = useState<
+    Record<string, string>
+  >({});
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     name: "",
@@ -59,12 +62,15 @@ export default function McpPage() {
     const data = (await res.json()) as McpServer[];
     setServers(data);
     const toolMap: Record<string, ToolItem[]> = {};
+    const toolErrors: Record<string, string> = {};
     for (const s of data) {
       const tr = await fetch(`/api/mcp/servers/${s.id}/tools`);
-      const td = (await tr.json()) as { tools: ToolItem[] };
+      const td = (await tr.json()) as { tools: ToolItem[]; error?: string };
       toolMap[s.id] = td.tools ?? [];
+      if (td.error) toolErrors[s.id] = td.error;
     }
     setToolsByServer(toolMap);
+    setToolErrorsByServer(toolErrors);
   }, []);
 
   useEffect(() => {
@@ -476,6 +482,11 @@ export default function McpPage() {
                             <p className="text-sm text-muted-foreground font-mono mt-1 break-all">
                               {formatServerEndpoint(s)}
                             </p>
+                            {toolErrorsByServer[s.id] && (
+                              <p className="text-sm text-destructive mt-2 whitespace-pre-wrap">
+                                {toolErrorsByServer[s.id]}
+                              </p>
+                            )}
                             {s.headers && Object.keys(s.headers).length > 0 && (
                               <div className="mt-2 space-y-1">
                                 <p className="text-xs font-medium text-muted-foreground">

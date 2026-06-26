@@ -24,7 +24,6 @@ export class ToolingGatewayService {
     }
     return tools;
   }
-
   async getLangChainTools(
     extraTools: StructuredToolInterface[] = []
   ): Promise<{
