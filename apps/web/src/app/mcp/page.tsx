@@ -34,6 +34,11 @@ type ToolItem = { name: string; description?: string };
 
 type McpConnectionMode = "stdio" | "http" | "sse";
 
+type CatalogDraft = {
+  customArgs: string;
+  env: string;
+};
+
 const EMPTY_MANUAL_FORM = {
   name: "",
   mode: "stdio" as McpConnectionMode,
@@ -54,6 +59,9 @@ export default function McpPage() {
   >({});
   const [loading, setLoading] = useState(true);
   const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
+  const [catalogDrafts, setCatalogDrafts] = useState<
+    Record<string, CatalogDraft>
+  >({});
   const [saving, setSaving] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const fetchServers = useCallback(async () => {
@@ -107,6 +115,35 @@ export default function McpPage() {
 
   const parseEnv = parseKeyValueBlock;
 
+  const getCatalogDraft = (entry: McpCatalogEntry): CatalogDraft => {
+    const draft = catalogDrafts[entry.id];
+    return {
+      customArgs: draft?.customArgs ?? entry.customArgs?.join(" ") ?? "",
+      env:
+        draft?.env ??
+        Object.entries(entry.env ?? {})
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\n"),
+    };
+  };
+
+  const updateCatalogDraft = (
+    entry: McpCatalogEntry,
+    patch: Partial<CatalogDraft>
+  ) => {
+    setCatalogDrafts((prev) => ({
+      ...prev,
+      [entry.id]: {
+        customArgs: entry.customArgs?.join(" ") ?? "",
+        env: Object.entries(entry.env ?? {})
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\n"),
+        ...prev[entry.id],
+        ...patch,
+      },
+    }));
+  };
+
   const isRemoteMode =
     manualForm.mode === "http" || manualForm.mode === "sse";
 
@@ -152,6 +189,7 @@ export default function McpPage() {
     if (addingId) return;
     setAddingId(entry.id);
     try {
+      const draft = getCatalogDraft(entry);
       await fetch("/api/mcp/servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -159,8 +197,10 @@ export default function McpPage() {
           name: entry.name,
           type: "stdio",
           command: entry.command,
-          args: entry.args.concat(entry.customArgs ?? []),
-          env: entry.env,
+          args: entry.args.concat(
+            draft.customArgs.trim().split(/\s+/).filter(Boolean)
+          ),
+          env: parseKeyValueBlock(draft.env),
         }),
       });
       await fetchServers();
@@ -223,7 +263,9 @@ export default function McpPage() {
                       {category}
                     </h3>
                     <ul className="space-y-2">
-                      {entries.map((entry) => (
+                      {entries.map((entry) => {
+                        const draft = getCatalogDraft(entry);
+                        return (
                         <li key={entry.id}>
                           <div className="flex items-center justify-between gap-4 rounded-lg border bg-card p-3">
                             <div className="min-w-0 flex-1 space-y-2">
@@ -247,28 +289,29 @@ export default function McpPage() {
                               </label>
                               <Input
                                 type="text"
-                                value={entry.customArgs?.join(" ")}
+                                value={draft.customArgs}
                                 onChange={(e) =>
-                                  (entry.customArgs = e.target.value.split(" "))
+                                  updateCatalogDraft(entry, {
+                                    customArgs: e.target.value,
+                                  })
                                 }
                               />
                               <label className="text-sm font-medium">
-                                환경변수 (공백 구분)
+                                환경변수
                               </label>
                               <textarea
                                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
-                                value={Object.entries(entry.env ?? {})
-                                  .map(([key, value]) => `${key}=${value}`)
-                                  .join("\n")}
+                                value={draft.env}
                                 onChange={(e) =>
-                                  (entry.env = Object.fromEntries(
-                                    e.target.value
-                                      .split("\n")
-                                      .map((line) => line.split("="))
-                                  ))
+                                  updateCatalogDraft(entry, {
+                                    env: e.target.value,
+                                  })
                                 }
                               />
+                              <p className="text-xs text-muted-foreground">
+                                KEY=VALUE 형식으로 한 줄에 하나씩 입력하세요.
+                              </p>
                             </div>
                             <Button
                               size="sm"
@@ -280,7 +323,8 @@ export default function McpPage() {
                             </Button>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 )
