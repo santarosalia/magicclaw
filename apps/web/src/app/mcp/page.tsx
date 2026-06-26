@@ -32,6 +32,18 @@ type McpServer = {
 
 type ToolItem = { name: string; description?: string };
 
+type McpConnectionMode = "stdio" | "http" | "sse";
+
+const EMPTY_MANUAL_FORM = {
+  name: "",
+  mode: "stdio" as McpConnectionMode,
+  command: "",
+  args: "",
+  env: "",
+  url: "",
+  headers: "",
+};
+
 export default function McpPage() {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [toolsByServer, setToolsByServer] = useState<
@@ -41,20 +53,8 @@ export default function McpPage() {
     Record<string, string>
   >({});
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
-    name: "",
-    command: "",
-    args: "",
-    env: "",
-  });
-  const [urlForm, setUrlForm] = useState({
-    name: "",
-    url: "",
-    transport: "http" as "http" | "sse",
-    headers: "",
-  });
+  const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
   const [saving, setSaving] = useState(false);
-  const [savingUrl, setSavingUrl] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const fetchServers = useCallback(async () => {
     const res = await fetch("/api/mcp/servers");
@@ -107,6 +107,47 @@ export default function McpPage() {
 
   const parseEnv = parseKeyValueBlock;
 
+  const isRemoteMode =
+    manualForm.mode === "http" || manualForm.mode === "sse";
+
+  const canSubmitManual =
+    manualForm.name.trim() &&
+    (isRemoteMode
+      ? manualForm.url.trim()
+      : manualForm.command.trim() || manualForm.args.trim());
+
+  const addManualServer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmitManual || saving) return;
+    setSaving(true);
+    try {
+      const body = isRemoteMode
+        ? {
+            name: manualForm.name.trim(),
+            type: manualForm.mode,
+            url: manualForm.url.trim(),
+            headers: parseKeyValueBlock(manualForm.headers),
+          }
+        : {
+            name: manualForm.name.trim(),
+            type: "stdio" as const,
+            command: manualForm.command.trim() || "npx",
+            args: manualForm.args.trim().split(/\s+/).filter(Boolean),
+            env: parseEnv(manualForm.env),
+          };
+
+      await fetch("/api/mcp/servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setManualForm(EMPTY_MANUAL_FORM);
+      await fetchServers();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const addFromCatalog = async (entry: McpCatalogEntry) => {
     if (addingId) return;
     setAddingId(entry.id);
@@ -125,64 +166,6 @@ export default function McpPage() {
       await fetchServers();
     } finally {
       setAddingId(null);
-    }
-  };
-
-  const addServer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name.trim() || saving) return;
-    setSaving(true);
-    try {
-      const args = form.args.trim().split(/\s+/).filter(Boolean);
-      const env = parseEnv(form.env);
-      await fetch("/api/mcp/servers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          type: "stdio",
-          command: form.command.trim() || "npx",
-          args,
-          env,
-        }),
-      });
-      setForm({
-        name: "",
-        command: "",
-        args: "",
-        env: "",
-      });
-      await fetchServers();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const addUrlServer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlForm.name.trim() || !urlForm.url.trim() || savingUrl) return;
-    setSavingUrl(true);
-    try {
-      const headers = parseKeyValueBlock(urlForm.headers);
-      await fetch("/api/mcp/servers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: urlForm.name.trim(),
-          type: urlForm.transport,
-          url: urlForm.url.trim(),
-          headers,
-        }),
-      });
-      setUrlForm({
-        name: "",
-        url: "",
-        transport: "http",
-        headers: "",
-      });
-      await fetchServers();
-    } finally {
-      setSavingUrl(false);
     }
   };
 
@@ -308,141 +291,124 @@ export default function McpPage() {
           {/* 수동 추가 폼 */}
           <Card>
             <CardHeader>
-              <CardTitle>서버 수동 추가 (stdio)</CardTitle>
+              <CardTitle>서버 수동 추가</CardTitle>
               <CardDescription>
-                직접 command/args를 입력해 추가할 수 있습니다.
+                로컬 stdio 프로세스 또는 원격 MCP URL로 서버를 등록합니다.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={addServer} className="space-y-4">
+              <form onSubmit={addManualServer} className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">이름</label>
                   <Input
                     placeholder="예: my-mcp"
-                    value={form.name}
+                    value={manualForm.name}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, name: e.target.value }))
+                      setManualForm((f) => ({ ...f, name: e.target.value }))
                     }
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">command</label>
-                  <Input
-                    placeholder="npx"
-                    value={form.command}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, command: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    args (공백 구분)
-                  </label>
-                  <Input
-                    placeholder="-y @modelcontextprotocol/server-everything"
-                    value={form.args}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, args: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    환경 변수 (선택사항)
-                  </label>
-                  <textarea
-                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
-                    value={form.env}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, env: e.target.value }))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    KEY=VALUE 형식으로 한 줄에 하나씩 입력하거나, JSON 형식으로
-                    입력할 수 있습니다.
-                    <br />
-                    예: DATABASE_URI=postgresql://localhost/db
-                  </p>
-                </div>
-                <Button type="submit" disabled={saving || !form.name.trim()}>
-                  추가
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>URL로 추가 (HTTP / SSE)</CardTitle>
-              <CardDescription>
-                원격 MCP 서버 URL을 직접 등록합니다. Streamable HTTP는 http,
-                레거시 SSE 엔드포인트는 sse를 선택하세요.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={addUrlServer} className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">이름</label>
-                  <Input
-                    placeholder="예: remote-mcp"
-                    value={urlForm.name}
-                    onChange={(e) =>
-                      setUrlForm((f) => ({ ...f, name: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">MCP URL</label>
-                  <Input
-                    placeholder="https://example.com/mcp"
-                    value={urlForm.url}
-                    onChange={(e) =>
-                      setUrlForm((f) => ({ ...f, url: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">전송 방식</label>
+                  <label className="text-sm font-medium">연결 방식</label>
                   <select
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={urlForm.transport}
+                    value={manualForm.mode}
                     onChange={(e) =>
-                      setUrlForm((f) => ({
+                      setManualForm((f) => ({
                         ...f,
-                        transport: e.target.value as "http" | "sse",
+                        mode: e.target.value as McpConnectionMode,
                       }))
                     }
                   >
-                    <option value="http">HTTP (Streamable HTTP)</option>
-                    <option value="sse">SSE</option>
+                    <option value="stdio">stdio (로컬 프로세스)</option>
+                    <option value="http">URL — HTTP (Streamable HTTP)</option>
+                    <option value="sse">URL — SSE</option>
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    요청 헤더 (선택사항)
-                  </label>
-                  <textarea
-                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="Authorization=Bearer your-token&#10;X-Api-Key=your-key"
-                    value={urlForm.headers}
-                    onChange={(e) =>
-                      setUrlForm((f) => ({ ...f, headers: e.target.value }))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    인증이 필요한 원격 MCP에 KEY=VALUE 형식으로 헤더를
-                    입력하세요.
-                  </p>
-                </div>
-                <Button
-                  type="submit"
-                  disabled={
-                    savingUrl || !urlForm.name.trim() || !urlForm.url.trim()
-                  }
-                >
-                  URL로 추가
+
+                {isRemoteMode ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">MCP URL</label>
+                      <Input
+                        placeholder="https://example.com/mcp"
+                        value={manualForm.url}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, url: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        요청 헤더 (선택사항)
+                      </label>
+                      <textarea
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="Authorization=Bearer your-token&#10;X-Api-Key=your-key"
+                        value={manualForm.headers}
+                        onChange={(e) =>
+                          setManualForm((f) => ({
+                            ...f,
+                            headers: e.target.value,
+                          }))
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        인증이 필요한 원격 MCP에 KEY=VALUE 형식으로 헤더를
+                        입력하세요.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">command</label>
+                      <Input
+                        placeholder="npx"
+                        value={manualForm.command}
+                        onChange={(e) =>
+                          setManualForm((f) => ({
+                            ...f,
+                            command: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        args (공백 구분)
+                      </label>
+                      <Input
+                        placeholder="-y @modelcontextprotocol/server-everything"
+                        value={manualForm.args}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, args: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        환경 변수 (선택사항)
+                      </label>
+                      <textarea
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
+                        value={manualForm.env}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, env: e.target.value }))
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        KEY=VALUE 형식으로 한 줄에 하나씩 입력하거나, JSON
+                        형식으로 입력할 수 있습니다.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <Button type="submit" disabled={saving || !canSubmitManual}>
+                  추가
                 </Button>
               </form>
             </CardContent>
