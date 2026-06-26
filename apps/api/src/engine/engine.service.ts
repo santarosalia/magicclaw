@@ -58,7 +58,22 @@ export class EngineService {
     return JSON.stringify(
       this.mcpStore
         .findAll()
-        .map((s) => ({ id: s.id, command: s.command, args: s.args, env: s.env }))
+        .map((s) =>
+          s.type === "stdio"
+            ? {
+                id: s.id,
+                type: s.type,
+                command: s.command,
+                args: s.args,
+                env: s.env,
+              }
+            : {
+                id: s.id,
+                type: s.type,
+                url: s.url,
+                headers: s.headers,
+              }
+        )
         .sort((a, b) => a.id.localeCompare(b.id))
     );
   }

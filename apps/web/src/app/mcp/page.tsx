@@ -21,10 +21,12 @@ import {
 type McpServer = {
   id: string;
   name: string;
-  type: string;
-  command: string;
-  args: string[];
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   createdAt: string;
 };
 
@@ -42,7 +44,14 @@ export default function McpPage() {
     args: "",
     env: "",
   });
+  const [urlForm, setUrlForm] = useState({
+    name: "",
+    url: "",
+    transport: "http" as "http" | "sse",
+    headers: "",
+  });
   const [saving, setSaving] = useState(false);
+  const [savingUrl, setSavingUrl] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const fetchServers = useCallback(async () => {
     const res = await fetch("/api/mcp/servers");
@@ -63,11 +72,12 @@ export default function McpPage() {
     fetchServers().finally(() => setLoading(false));
   }, [fetchServers]);
 
-  const parseEnv = (envString: string): Record<string, string> | undefined => {
-    if (!envString.trim()) return undefined;
+  const parseKeyValueBlock = (
+    raw: string
+  ): Record<string, string> | undefined => {
+    if (!raw.trim()) return undefined;
     try {
-      // JSON 형식으로 파싱 시도
-      const parsed = JSON.parse(envString);
+      const parsed = JSON.parse(raw);
       if (
         typeof parsed === "object" &&
         parsed !== null &&
@@ -76,21 +86,20 @@ export default function McpPage() {
         return parsed as Record<string, string>;
       }
     } catch {
-      // JSON이 아니면 KEY=VALUE 형식으로 파싱
-      const lines = envString.split("\n").filter((line) => line.trim());
-      const env: Record<string, string> = {};
+      const lines = raw.split("\n").filter((line) => line.trim());
+      const result: Record<string, string> = {};
       for (const line of lines) {
         const match = line.match(/^([^=]+)=(.*)$/);
         if (match) {
-          const key = match[1].trim();
-          const value = match[2].trim();
-          env[key] = value;
+          result[match[1].trim()] = match[2].trim();
         }
       }
-      return Object.keys(env).length > 0 ? env : undefined;
+      return Object.keys(result).length > 0 ? result : undefined;
     }
     return undefined;
   };
+
+  const parseEnv = parseKeyValueBlock;
 
   const addFromCatalog = async (entry: McpCatalogEntry) => {
     if (addingId) return;
@@ -141,6 +150,41 @@ export default function McpPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const addUrlServer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!urlForm.name.trim() || !urlForm.url.trim() || savingUrl) return;
+    setSavingUrl(true);
+    try {
+      const headers = parseKeyValueBlock(urlForm.headers);
+      await fetch("/api/mcp/servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: urlForm.name.trim(),
+          type: urlForm.transport,
+          url: urlForm.url.trim(),
+          headers,
+        }),
+      });
+      setUrlForm({
+        name: "",
+        url: "",
+        transport: "http",
+        headers: "",
+      });
+      await fetchServers();
+    } finally {
+      setSavingUrl(false);
+    }
+  };
+
+  const formatServerEndpoint = (server: McpServer): string => {
+    if (server.type === "http" || server.type === "sse") {
+      return server.url ?? "";
+    }
+    return `${server.command ?? ""} ${(server.args ?? []).join(" ")}`.trim();
   };
 
   const removeServer = async (id: string) => {
@@ -322,6 +366,81 @@ export default function McpPage() {
               </form>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>URL로 추가 (HTTP / SSE)</CardTitle>
+              <CardDescription>
+                원격 MCP 서버 URL을 직접 등록합니다. Streamable HTTP는 http,
+                레거시 SSE 엔드포인트는 sse를 선택하세요.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={addUrlServer} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">이름</label>
+                  <Input
+                    placeholder="예: remote-mcp"
+                    value={urlForm.name}
+                    onChange={(e) =>
+                      setUrlForm((f) => ({ ...f, name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">MCP URL</label>
+                  <Input
+                    placeholder="https://example.com/mcp"
+                    value={urlForm.url}
+                    onChange={(e) =>
+                      setUrlForm((f) => ({ ...f, url: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">전송 방식</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={urlForm.transport}
+                    onChange={(e) =>
+                      setUrlForm((f) => ({
+                        ...f,
+                        transport: e.target.value as "http" | "sse",
+                      }))
+                    }
+                  >
+                    <option value="http">HTTP (Streamable HTTP)</option>
+                    <option value="sse">SSE</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    요청 헤더 (선택사항)
+                  </label>
+                  <textarea
+                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="Authorization=Bearer your-token&#10;X-Api-Key=your-key"
+                    value={urlForm.headers}
+                    onChange={(e) =>
+                      setUrlForm((f) => ({ ...f, headers: e.target.value }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    인증이 필요한 원격 MCP에 KEY=VALUE 형식으로 헤더를
+                    입력하세요.
+                  </p>
+                </div>
+                <Button
+                  type="submit"
+                  disabled={
+                    savingUrl || !urlForm.name.trim() || !urlForm.url.trim()
+                  }
+                >
+                  URL로 추가
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
         </div>
 
         {/* 오른쪽: 사용 중인 서버 목록 (Sticky) */}
@@ -350,10 +469,36 @@ export default function McpPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold">{s.name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {s.type}
+                              </Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground font-mono mt-1">
-                              {s.command} {s.args.join(" ")}
+                            <p className="text-sm text-muted-foreground font-mono mt-1 break-all">
+                              {formatServerEndpoint(s)}
                             </p>
+                            {s.headers && Object.keys(s.headers).length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground">
+                                  요청 헤더:
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {Object.entries(s.headers).map(
+                                    ([key, value]) => (
+                                      <Badge
+                                        key={key}
+                                        variant="outline"
+                                        className="text-xs font-mono"
+                                      >
+                                        {key}=
+                                        {value.length > 20
+                                          ? `${value.substring(0, 20)}...`
+                                          : value}
+                                      </Badge>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            )}
                             {s.env && Object.keys(s.env).length > 0 && (
                               <div className="mt-2 space-y-1">
                                 <p className="text-xs font-medium text-muted-foreground">

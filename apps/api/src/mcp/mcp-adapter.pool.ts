@@ -2,44 +2,68 @@ import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { McpServerConfig } from "./dto/mcp-server.dto.js";
+import { isRemoteMcpServer } from "./dto/mcp-server.dto.js";
 import { shTool } from "./tool/sh.js";
 
-function getPoolKey(servers: McpServerConfig[]): string {
-  const normalized = [...servers]
-    .sort((a, b) => a.id.localeCompare(b.id))
-    .map((s) => ({
-      id: s.id,
-      command: s.command,
-      args: s.args ?? [],
-      env: s.env ?? {},
-    }));
-  return JSON.stringify(normalized);
-}
-
-function buildMcpServersRecord(servers: McpServerConfig[]): Record<
-  string,
-  {
-    transport: "stdio";
-    command: string;
-    args: string[];
-    env?: Record<string, string>;
-  }
-> {
-  const mcpServers: Record<
-    string,
-    {
+type McpConnectionConfig =
+  | {
       transport: "stdio";
       command: string;
       args: string[];
       env?: Record<string, string>;
     }
-  > = {};
-  for (const s of servers) {
-    mcpServers[s.id] = {
+  | {
+      transport: "http" | "sse";
+      url: string;
+      headers?: Record<string, string>;
+    };
+
+function getPoolKey(servers: McpServerConfig[]): string {
+  const normalized = [...servers]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((server) => {
+      if (isRemoteMcpServer(server)) {
+        return {
+          id: server.id,
+          type: server.type,
+          url: server.url,
+          headers: server.headers ?? {},
+        };
+      }
+      return {
+        id: server.id,
+        type: server.type,
+        command: server.command,
+        args: server.args ?? [],
+        env: server.env ?? {},
+      };
+    });
+  return JSON.stringify(normalized);
+}
+
+function buildMcpServersRecord(
+  servers: McpServerConfig[]
+): Record<string, McpConnectionConfig> {
+  const mcpServers: Record<string, McpConnectionConfig> = {};
+  for (const server of servers) {
+    if (isRemoteMcpServer(server)) {
+      mcpServers[server.id] = {
+        transport: server.type,
+        url: server.url,
+        ...(server.headers &&
+          Object.keys(server.headers).length > 0 && {
+            headers: server.headers,
+          }),
+      };
+      continue;
+    }
+
+    mcpServers[server.id] = {
       transport: "stdio",
-      command: s.command,
-      args: s.args ?? [],
-      ...(s.env && Object.keys(s.env).length > 0 && { env: s.env }),
+      command: server.command,
+      args: server.args ?? [],
+      ...(server.env &&
+        Object.keys(server.env).length > 0 && { env: server.env }),
     };
   }
   return mcpServers;
