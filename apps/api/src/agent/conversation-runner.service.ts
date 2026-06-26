@@ -25,6 +25,13 @@ import {
   AgentChannel,
 } from "./agent.types";
 import { IterationBudget } from "./iteration-budget.js";
+import {
+  computeMessageTokenBudget,
+  estimateToolsTokens,
+  getContextBudgetConfig,
+  isContextLengthError,
+  shrinkMessagesToBudget,
+} from "./context-budget.util.js";
 
 const AgentStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -82,6 +89,38 @@ prefer interacting with the current browser page instead of using the generic se
     return `${this.baseSystemPrompt}\n\n${memoryBlock}`;
   }
 
+  private async invokeWithContextGuard(
+    llm: { invoke: ChatOpenAI["invoke"] },
+    systemPrompt: string,
+    messages: BaseMessage[],
+    toolsTokenEstimate = 0
+  ) {
+    const config = getContextBudgetConfig();
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const shrink = 1 - attempt * 0.12;
+      const budget = Math.floor(
+        computeMessageTokenBudget(
+          {
+            ...config,
+            safetyMargin: config.safetyMargin + attempt * 1024,
+          },
+          [systemPrompt],
+          toolsTokenEstimate
+        ) * shrink
+      );
+      const fitted = shrinkMessagesToBudget(messages, budget);
+      try {
+        return await llm.invoke([
+          new SystemMessage({ content: systemPrompt }),
+          ...fitted,
+        ]);
+      } catch (error) {
+        if (!isContextLengthError(error) || attempt === 5) throw error;
+      }
+    }
+    throw new Error("context guard exhausted retries");
+  }
+
   private injectEphemeralContext(
     messages: BaseMessage[],
     memoryContext?: string
@@ -130,6 +169,7 @@ prefer interacting with the current browser page instead of using the generic se
     options: AgentChatOptions
   ) {
     const llmWithTools = llm.bindTools(tools);
+    const toolsTokenEstimate = estimateToolsTokens(tools);
     const toolNode = new ToolNode(tools, { handleToolErrors: true });
 
     const runTools = async (state: AgentState) => {
@@ -158,16 +198,17 @@ prefer interacting with the current browser page instead of using the generic se
         };
       }
 
+      const systemPrompt = this.buildSystemPrompt(state.systemMemoryBlock);
       const apiMessages = this.injectEphemeralContext(
         state.messages,
         state.memoryContext
       );
-      const response = await llmWithTools.invoke([
-        new SystemMessage({
-          content: this.buildSystemPrompt(state.systemMemoryBlock),
-        }),
-        ...apiMessages,
-      ]);
+      const response = await this.invokeWithContextGuard(
+        llmWithTools,
+        systemPrompt,
+        apiMessages,
+        toolsTokenEstimate
+      );
 
       return {
         messages: [response],
@@ -187,13 +228,14 @@ prefer interacting with the current browser page instead of using the generic se
     });
 
     const summarize = async (state: AgentState) => {
-      const response = await llm.invoke([
-        new SystemMessage({
-          content:
-            "Summarize progress and give the best possible final answer. Tool budget is exhausted.",
-        }),
-        ...state.messages,
-      ]);
+      const systemPrompt =
+        "Summarize progress and give the best possible final answer. Tool budget is exhausted.";
+      const response = await this.invokeWithContextGuard(
+        llm,
+        systemPrompt,
+        state.messages,
+        toolsTokenEstimate
+      );
       return {
         messages: [response],
         turnExitReason: state.turnExitReason || "budget_exhausted",

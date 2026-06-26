@@ -7,6 +7,7 @@ import { ContextCompressionService } from "./context-compression.service.js";
 import { TodoStoreService } from "./todo-store.service.js";
 import { AgentChannel } from "./agent.types.js";
 import type { UserScope } from "../user/user-scope.js";
+import { ModelFactoryService } from "./model-factory.service.js";
 
 export interface TurnContext {
   sessionId: string;
@@ -26,7 +27,8 @@ export class TurnContextService {
     private readonly sessionDb: SessionDbService,
     private readonly memoryManager: MemoryManagerService,
     private readonly contextCompression: ContextCompressionService,
-    private readonly todoStore: TodoStoreService
+    private readonly todoStore: TodoStoreService,
+    private readonly modelFactory: ModelFactoryService
   ) {}
 
   async build(input: {
@@ -45,10 +47,16 @@ export class TurnContextService {
 
     await this.memoryManager.initializeAll(userScope.userId, sessionId);
 
+    const systemMemoryBlock = this.memoryManager.buildSystemPromptBlock(
+      userScope.userId
+    );
+    const llm = this.modelFactory.create();
     const history = await this.session.ensureLoaded(sessionId);
     const compressedHistory = await this.contextCompression.maybeCompress(
       sessionId,
-      history
+      history,
+      llm,
+      systemMemoryBlock
     );
 
     const userMsg = new HumanMessage({ content: userText.trim() });
@@ -63,9 +71,6 @@ export class TurnContextService {
     const memoryContext = [builtinContext, memoryPrefetch, todoBlock]
       .filter(Boolean)
       .join("\n\n");
-    const systemMemoryBlock = this.memoryManager.buildSystemPromptBlock(
-      userScope.userId
-    );
 
     return {
       sessionId,

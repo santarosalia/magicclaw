@@ -6,6 +6,12 @@ import { MemoryConfigStoreService } from "../store/memory-config-store.service.j
 import { MemoryManagerService } from "../memory/memory-manager.service.js";
 import { TodoStoreService } from "./todo-store.service.js";
 import { getMessageContentAsString } from "../agent/agent.types.js";
+import {
+  BASE_SYSTEM_PROMPT_TOKEN_RESERVE,
+  computeMessageTokenBudget,
+  getContextBudgetConfig,
+  shrinkMessagesToBudget,
+} from "./context-budget.util.js";
 
 @Injectable()
 export class ContextCompressionService {
@@ -18,10 +24,13 @@ export class ContextCompressionService {
   async maybeCompress(
     sessionId: string,
     messages: BaseMessage[],
-    llm?: ChatOpenAI
+    llm?: ChatOpenAI,
+    systemOverhead = ""
   ): Promise<BaseMessage[]> {
     const maxMessages = this.configStore.getConfig().maxContextMessages;
-    if (messages.length <= maxMessages) return messages;
+    if (messages.length <= maxMessages) {
+      return this.trimToTokenBudget(messages, systemOverhead);
+    }
 
     await this.memoryManager.onPreCompress(sessionId);
 
@@ -31,7 +40,7 @@ export class ContextCompressionService {
     const middle = messages.slice(2, messages.length - keepCount);
 
     if (middle.length === 0 || !llm) {
-      return [...head, ...tail];
+      return this.trimToTokenBudget([...head, ...tail], systemOverhead);
     }
 
     const summaryPrompt = [
@@ -50,7 +59,9 @@ export class ContextCompressionService {
         new HumanMessage({ content: summaryPrompt }),
       ]);
       const summary = getMessageContentAsString(response).trim();
-      if (!summary) return [...head, ...tail];
+      if (!summary) {
+        return this.trimToTokenBudget([...head, ...tail], systemOverhead);
+      }
       const compressed = new HumanMessage({
         content: `[Compressed context from earlier turns]\n${summary}`,
       });
@@ -62,9 +73,23 @@ export class ContextCompressionService {
             ...tail,
           ]
         : [...head, compressed, ...tail];
-      return withTodos;
+      return this.trimToTokenBudget(withTodos, systemOverhead);
     } catch {
-      return [...head, ...tail];
+      return this.trimToTokenBudget([...head, ...tail], systemOverhead);
     }
+  }
+
+  private trimToTokenBudget(
+    messages: BaseMessage[],
+    systemOverhead: string
+  ): BaseMessage[] {
+    const config = getContextBudgetConfig();
+    const budget = computeMessageTokenBudget(
+      config,
+      [systemOverhead],
+      undefined,
+      BASE_SYSTEM_PROMPT_TOKEN_RESERVE
+    );
+    return shrinkMessagesToBudget(messages, budget);
   }
 }

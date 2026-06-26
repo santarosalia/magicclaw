@@ -24,6 +24,7 @@ export class ModelFactoryService {
     const modelId = model ?? defaultConfig.model;
     return new ChatOpenAI({
       model: modelId,
+      maxTokens: Number(process.env.AGENT_MAX_OUTPUT_TOKENS ?? 4096),
       apiKey: defaultConfig.apiKey || "not-needed",
       configuration: defaultConfig.baseURL
         ? { baseURL: defaultConfig.baseURL }
