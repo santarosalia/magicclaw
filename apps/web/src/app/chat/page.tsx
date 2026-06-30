@@ -2,43 +2,120 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Send } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import rehypeRaw from "rehype-raw";
 import { ToolCallFlow } from "@/components/ToolCallFlow";
+import { ChatComposer } from "@/components/chat/ChatComposer";
+import { ChatMessageList } from "@/components/chat/ChatMessageList";
+import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
 import { useAgentSocket } from "@/lib/useAgentSocket";
+import {
+  deleteSession,
+  listSessions,
+  type SessionRecord,
+} from "@/lib/sessions-api";
 
 export default function ChatPage() {
-  const [input, setInput] = useState("");
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const {
+    userId,
+    conversationId,
     connecting,
     connected,
     loading,
     streamingContent,
     messages,
-    events,
     sendChat,
+    startNewConversation,
+    clearCurrentConversation,
+    resumeConversation,
   } = useAgentSocket();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sessionListRef = useRef<HTMLDivElement>(null);
+  const shouldScrollMessagesRef = useRef(false);
+  const prevLoadingRef = useRef(false);
+  const conversationIdRef = useRef(conversationId);
 
-  // 스트리밍/새 메시지 시 하단으로 스크롤
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-    setInput("");
-    // 소켓으로 사용자 메시지만 전송 (히스토리는 백엔드 세션에서 관리)
-    sendChat(text);
-  }, [input, loading, sendChat]);
+  const refreshSessions = useCallback(async () => {
+    if (!userId) return;
+    const rows = await listSessions(userId);
+    setSessions(rows);
+  }, [userId]);
+
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (prevLoadingRef.current && !loading) {
+      void refreshSessions();
+    }
+    prevLoadingRef.current = loading;
+  }, [loading, refreshSessions]);
+
+  useEffect(() => {
+    if (loading) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    if (!shouldScrollMessagesRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    shouldScrollMessagesRef.current = false;
+  }, [messages, streamingContent, loading]);
+
+  const send = useCallback(
+    async (text: string) => {
+      if (loading) return;
+      const wasNew = !conversationIdRef.current;
+      shouldScrollMessagesRef.current = true;
+      await sendChat(text);
+      if (wasNew) {
+        await refreshSessions();
+      }
+    },
+    [loading, refreshSessions, sendChat]
+  );
+
+  const handleNewChat = useCallback(() => {
+    void startNewConversation().then(() => refreshSessions());
+  }, [refreshSessions, startNewConversation]);
+
+  const handleResume = useCallback(
+    (sessionId: string) => {
+      void resumeConversation(sessionId);
+      requestAnimationFrame(() => {
+        const el = sessionListRef.current?.querySelector(
+          `[data-session-id="${sessionId}"]`
+        );
+        el?.scrollIntoView({ block: "nearest" });
+      });
+    },
+    [resumeConversation]
+  );
+
+  const handleDelete = useCallback(
+    (sessionId: string) => {
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      void (async () => {
+        try {
+          await deleteSession(sessionId);
+          if (conversationIdRef.current === sessionId) {
+            clearCurrentConversation();
+          }
+          await refreshSessions();
+        } catch {
+          await refreshSessions();
+        }
+      })();
+    },
+    [clearCurrentConversation, refreshSessions]
+  );
 
   return (
     <main className="h-screen flex flex-col p-6">
@@ -49,115 +126,32 @@ export default function ChatPage() {
           </Link>
         </Button>
         <h1 className="text-xl font-semibold">채팅</h1>
+        <Button variant="outline" size="sm" className="ml-auto" asChild>
+          <Link href="/memory">메모리 설정</Link>
+        </Button>
       </div>
       <div className="flex flex-1 gap-4 min-h-0">
+        <ChatSessionSidebar
+          sessions={sessions}
+          conversationId={conversationId}
+          listRef={sessionListRef}
+          onNewChat={handleNewChat}
+          onResume={handleResume}
+          onDelete={handleDelete}
+        />
+
         <Card className="flex flex-col min-h-0 flex-2">
           <CardContent className="flex-1 overflow-auto p-4 space-y-4">
-            {messages.length === 0 && (
-              <p className="text-muted-foreground text-sm text-center py-8">
-                메시지가 없습니다.
-              </p>
-            )}
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={
-                  m.role === "user"
-                    ? "ml-auto max-w-[85%] rounded-lg bg-primary text-primary-foreground px-4 py-2"
-                    : "mr-auto max-w-[85%] rounded-lg border bg-card px-4 py-2"
-                }
-              >
-                {m.role === "user" ? (
-                  <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                ) : (
-                  <div className="markdown-content prose prose-invert max-w-none">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw, rehypeHighlight]}
-                      components={{
-                        code: ({ node, className, children, ...props }) => {
-                          const match = /language-(\w+)/.exec(className || "");
-                          return match ? (
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          ) : (
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          );
-                        },
-                      }}
-                    >
-                      {m.content}
-                    </ReactMarkdown>
-                  </div>
-                )}
-              </div>
-            ))}
-            {/* 스트리밍 중: 한 말풍선에서 중간 메시지가 실시간으로 갱신 */}
-            {loading && streamingContent ? (
-              <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2 animate-in fade-in duration-200 animate-streaming-border">
-                <div className="markdown-content prose prose-invert max-w-none animate-streaming-text">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw, rehypeHighlight]}
-                    components={{
-                      code: ({ node, className, children, ...props }) => {
-                        const match = /language-(\w+)/.exec(className || "");
-                        return match ? (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        ) : (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        );
-                      },
-                    }}
-                  >
-                    {streamingContent}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            ) : null}
-            {(loading || connecting) && !streamingContent ? (
-              <div className="flex items-center gap-2 rounded-lg border border-primary/20 px-3 py-2 text-muted-foreground text-sm animate-streaming-border">
-                <span>
-                  {connecting
-                    ? "서버에 연결 중..."
-                    : connected
-                    ? "응답 중..."
-                    : "연결이 끊어졌습니다."}
-                </span>
-              </div>
-            ) : null}
-            <div ref={messagesEndRef} />
-          </CardContent>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              send();
-            }}
-            className="p-4 border-t flex gap-2"
-          >
-            <Input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="메시지 입력..."
-              disabled={loading}
-              className="flex-1"
+            <ChatMessageList
+              messages={messages}
+              streamingContent={streamingContent}
+              loading={loading}
+              connecting={connecting}
+              connected={connected}
+              messagesEndRef={messagesEndRef}
             />
-            <Button
-              type="submit"
-              disabled={loading || !input.trim()}
-              size="icon"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </form>
+          </CardContent>
+          <ChatComposer disabled={loading} onSend={send} />
         </Card>
 
         <Card className="overflow-hidden flex-1 h-full">

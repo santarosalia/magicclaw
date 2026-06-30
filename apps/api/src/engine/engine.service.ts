@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import {
-  callMcpTool,
-  listToolsFromMcpServer,
-} from "../mcp/mcp-client.service.js";
+import { McpAdapterService } from "../mcp/mcp-adapter.service.js";
 import type { McpServerConfig } from "../mcp/dto/mcp-server.dto.js";
-import { McpStoreService } from "../mcp/mcp-store.service.js";
+import { McpStoreService } from "../store/mcp-store.service.js";
 import type {
   FlowRunRequestDto,
   FlowRunResultDto,
@@ -14,6 +11,7 @@ import type {
 
 /** 툴 이름 → MCP 서버 설정 캐시 */
 const toolServerCache = new Map<string, McpServerConfig>();
+let cacheSignature = "";
 
 /**
  * 엣지 기준 위상 정렬. source → target 순서로 실행되도록 노드 id 배열 반환.
@@ -51,14 +49,51 @@ function topologicalOrder(
 
 @Injectable()
 export class EngineService {
-  constructor(private readonly mcpStore: McpStoreService) {}
+  constructor(
+    private readonly mcpStore: McpStoreService,
+    private readonly mcpAdapter: McpAdapterService
+  ) {}
 
-  private async findServerForTool(toolName: string): Promise<McpServerConfig | null> {
+  private getStoreSignature(): string {
+    return JSON.stringify(
+      this.mcpStore
+        .findAll()
+        .map((s) =>
+          s.type === "stdio"
+            ? {
+                id: s.id,
+                type: s.type,
+                command: s.command,
+                args: s.args,
+                env: s.env,
+              }
+            : {
+                id: s.id,
+                type: s.type,
+                url: s.url,
+                headers: s.headers,
+              }
+        )
+        .sort((a, b) => a.id.localeCompare(b.id))
+    );
+  }
+
+  private refreshCacheIfNeeded(): void {
+    const nextSignature = this.getStoreSignature();
+    if (nextSignature === cacheSignature) return;
+    cacheSignature = nextSignature;
+    toolServerCache.clear();
+  }
+
+  private async findServerForTool(
+    toolName: string
+  ): Promise<McpServerConfig | null> {
+    this.refreshCacheIfNeeded();
     const cached = toolServerCache.get(toolName);
     if (cached) return cached;
 
     for (const server of this.mcpStore.findAll()) {
-      const result = await listToolsFromMcpServer(server);
+      const result = await this.mcpAdapter.listToolsFromMcpServer(server);
       if (result.tools.some((t) => t.name === toolName)) {
         toolServerCache.set(toolName, server);
         return server;
@@ -78,7 +113,7 @@ export class EngineService {
         isError: true,
       };
     }
-    const result = await callMcpTool(server, toolName, args);
+    const result = await this.mcpAdapter.callMcpTool(server, toolName, args);
     const text = result.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
       .map((c) => c.text)
@@ -104,10 +139,7 @@ export class EngineService {
 
     const nodeMap = new Map(toolNodes.map((n) => [n.id, n]));
     const nodeIds = toolNodes.map((n) => n.id);
-    const order =
-      edges.length > 0
-        ? topologicalOrder(nodeIds, edges)
-        : nodeIds;
+    const order = edges.length > 0 ? topologicalOrder(nodeIds, edges) : nodeIds;
 
     const results: FlowNodeResult[] = [];
     for (const id of order) {

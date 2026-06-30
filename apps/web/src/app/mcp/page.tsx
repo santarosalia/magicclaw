@@ -21,27 +21,47 @@ import {
 type McpServer = {
   id: string;
   name: string;
-  type: string;
-  command: string;
-  args: string[];
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   createdAt: string;
 };
 
 type ToolItem = { name: string; description?: string };
+
+type McpConnectionMode = "stdio" | "http" | "sse";
+
+type CatalogDraft = {
+  customArgs: string;
+  env: string;
+};
+
+const EMPTY_MANUAL_FORM = {
+  name: "",
+  mode: "stdio" as McpConnectionMode,
+  command: "",
+  args: "",
+  env: "",
+  url: "",
+  headers: "",
+};
 
 export default function McpPage() {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [toolsByServer, setToolsByServer] = useState<
     Record<string, ToolItem[]>
   >({});
+  const [toolErrorsByServer, setToolErrorsByServer] = useState<
+    Record<string, string>
+  >({});
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
-    name: "",
-    command: "",
-    args: "",
-    env: "",
-  });
+  const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
+  const [catalogDrafts, setCatalogDrafts] = useState<
+    Record<string, CatalogDraft>
+  >({});
   const [saving, setSaving] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const fetchServers = useCallback(async () => {
@@ -50,12 +70,15 @@ export default function McpPage() {
     const data = (await res.json()) as McpServer[];
     setServers(data);
     const toolMap: Record<string, ToolItem[]> = {};
+    const toolErrors: Record<string, string> = {};
     for (const s of data) {
       const tr = await fetch(`/api/mcp/servers/${s.id}/tools`);
-      const td = (await tr.json()) as { tools: ToolItem[] };
+      const td = (await tr.json()) as { tools: ToolItem[]; error?: string };
       toolMap[s.id] = td.tools ?? [];
+      if (td.error) toolErrors[s.id] = td.error;
     }
     setToolsByServer(toolMap);
+    setToolErrorsByServer(toolErrors);
   }, []);
 
   useEffect(() => {
@@ -63,11 +86,12 @@ export default function McpPage() {
     fetchServers().finally(() => setLoading(false));
   }, [fetchServers]);
 
-  const parseEnv = (envString: string): Record<string, string> | undefined => {
-    if (!envString.trim()) return undefined;
+  const parseKeyValueBlock = (
+    raw: string
+  ): Record<string, string> | undefined => {
+    if (!raw.trim()) return undefined;
     try {
-      // JSON 형식으로 파싱 시도
-      const parsed = JSON.parse(envString);
+      const parsed = JSON.parse(raw);
       if (
         typeof parsed === "object" &&
         parsed !== null &&
@@ -76,26 +100,96 @@ export default function McpPage() {
         return parsed as Record<string, string>;
       }
     } catch {
-      // JSON이 아니면 KEY=VALUE 형식으로 파싱
-      const lines = envString.split("\n").filter((line) => line.trim());
-      const env: Record<string, string> = {};
+      const lines = raw.split("\n").filter((line) => line.trim());
+      const result: Record<string, string> = {};
       for (const line of lines) {
         const match = line.match(/^([^=]+)=(.*)$/);
         if (match) {
-          const key = match[1].trim();
-          const value = match[2].trim();
-          env[key] = value;
+          result[match[1].trim()] = match[2].trim();
         }
       }
-      return Object.keys(env).length > 0 ? env : undefined;
+      return Object.keys(result).length > 0 ? result : undefined;
     }
     return undefined;
+  };
+
+  const parseEnv = parseKeyValueBlock;
+
+  const getCatalogDraft = (entry: McpCatalogEntry): CatalogDraft => {
+    const draft = catalogDrafts[entry.id];
+    return {
+      customArgs: draft?.customArgs ?? entry.customArgs?.join(" ") ?? "",
+      env:
+        draft?.env ??
+        Object.entries(entry.env ?? {})
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\n"),
+    };
+  };
+
+  const updateCatalogDraft = (
+    entry: McpCatalogEntry,
+    patch: Partial<CatalogDraft>
+  ) => {
+    setCatalogDrafts((prev) => ({
+      ...prev,
+      [entry.id]: {
+        customArgs: entry.customArgs?.join(" ") ?? "",
+        env: Object.entries(entry.env ?? {})
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\n"),
+        ...prev[entry.id],
+        ...patch,
+      },
+    }));
+  };
+
+  const isRemoteMode =
+    manualForm.mode === "http" || manualForm.mode === "sse";
+
+  const canSubmitManual =
+    manualForm.name.trim() &&
+    (isRemoteMode
+      ? manualForm.url.trim()
+      : manualForm.command.trim() || manualForm.args.trim());
+
+  const addManualServer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmitManual || saving) return;
+    setSaving(true);
+    try {
+      const body = isRemoteMode
+        ? {
+            name: manualForm.name.trim(),
+            type: manualForm.mode,
+            url: manualForm.url.trim(),
+            headers: parseKeyValueBlock(manualForm.headers),
+          }
+        : {
+            name: manualForm.name.trim(),
+            type: "stdio" as const,
+            command: manualForm.command.trim() || "npx",
+            args: manualForm.args.trim().split(/\s+/).filter(Boolean),
+            env: parseEnv(manualForm.env),
+          };
+
+      await fetch("/api/mcp/servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setManualForm(EMPTY_MANUAL_FORM);
+      await fetchServers();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const addFromCatalog = async (entry: McpCatalogEntry) => {
     if (addingId) return;
     setAddingId(entry.id);
     try {
+      const draft = getCatalogDraft(entry);
       await fetch("/api/mcp/servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,8 +197,10 @@ export default function McpPage() {
           name: entry.name,
           type: "stdio",
           command: entry.command,
-          args: entry.args.concat(entry.customArgs ?? []),
-          env: entry.env,
+          args: entry.args.concat(
+            draft.customArgs.trim().split(/\s+/).filter(Boolean)
+          ),
+          env: parseKeyValueBlock(draft.env),
         }),
       });
       await fetchServers();
@@ -113,34 +209,11 @@ export default function McpPage() {
     }
   };
 
-  const addServer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name.trim() || saving) return;
-    setSaving(true);
-    try {
-      const args = form.args.trim().split(/\s+/).filter(Boolean);
-      const env = parseEnv(form.env);
-      await fetch("/api/mcp/servers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          type: "stdio",
-          command: form.command.trim() || "npx",
-          args,
-          env,
-        }),
-      });
-      setForm({
-        name: "",
-        command: "",
-        args: "",
-        env: "",
-      });
-      await fetchServers();
-    } finally {
-      setSaving(false);
+  const formatServerEndpoint = (server: McpServer): string => {
+    if (server.type === "http" || server.type === "sse") {
+      return server.url ?? "";
     }
+    return `${server.command ?? ""} ${(server.args ?? []).join(" ")}`.trim();
   };
 
   const removeServer = async (id: string) => {
@@ -190,7 +263,9 @@ export default function McpPage() {
                       {category}
                     </h3>
                     <ul className="space-y-2">
-                      {entries.map((entry) => (
+                      {entries.map((entry) => {
+                        const draft = getCatalogDraft(entry);
+                        return (
                         <li key={entry.id}>
                           <div className="flex items-center justify-between gap-4 rounded-lg border bg-card p-3">
                             <div className="min-w-0 flex-1 space-y-2">
@@ -214,28 +289,29 @@ export default function McpPage() {
                               </label>
                               <Input
                                 type="text"
-                                value={entry.customArgs?.join(" ")}
+                                value={draft.customArgs}
                                 onChange={(e) =>
-                                  (entry.customArgs = e.target.value.split(" "))
+                                  updateCatalogDraft(entry, {
+                                    customArgs: e.target.value,
+                                  })
                                 }
                               />
                               <label className="text-sm font-medium">
-                                환경변수 (공백 구분)
+                                환경변수
                               </label>
                               <textarea
                                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
-                                value={Object.entries(entry.env ?? {})
-                                  .map(([key, value]) => `${key}=${value}`)
-                                  .join("\n")}
+                                value={draft.env}
                                 onChange={(e) =>
-                                  (entry.env = Object.fromEntries(
-                                    e.target.value
-                                      .split("\n")
-                                      .map((line) => line.split("="))
-                                  ))
+                                  updateCatalogDraft(entry, {
+                                    env: e.target.value,
+                                  })
                                 }
                               />
+                              <p className="text-xs text-muted-foreground">
+                                KEY=VALUE 형식으로 한 줄에 하나씩 입력하세요.
+                              </p>
                             </div>
                             <Button
                               size="sm"
@@ -247,7 +323,8 @@ export default function McpPage() {
                             </Button>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 )
@@ -258,65 +335,123 @@ export default function McpPage() {
           {/* 수동 추가 폼 */}
           <Card>
             <CardHeader>
-              <CardTitle>서버 수동 추가 (stdio)</CardTitle>
+              <CardTitle>서버 수동 추가</CardTitle>
               <CardDescription>
-                직접 command/args를 입력해 추가할 수 있습니다.
+                로컬 stdio 프로세스 또는 원격 MCP URL로 서버를 등록합니다.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={addServer} className="space-y-4">
+              <form onSubmit={addManualServer} className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">이름</label>
                   <Input
                     placeholder="예: my-mcp"
-                    value={form.name}
+                    value={manualForm.name}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, name: e.target.value }))
+                      setManualForm((f) => ({ ...f, name: e.target.value }))
                     }
                   />
                 </div>
+
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">command</label>
-                  <Input
-                    placeholder="npx"
-                    value={form.command}
+                  <label className="text-sm font-medium">연결 방식</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={manualForm.mode}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, command: e.target.value }))
+                      setManualForm((f) => ({
+                        ...f,
+                        mode: e.target.value as McpConnectionMode,
+                      }))
                     }
-                  />
+                  >
+                    <option value="stdio">stdio (로컬 프로세스)</option>
+                    <option value="http">URL — HTTP (Streamable HTTP)</option>
+                    <option value="sse">URL — SSE</option>
+                  </select>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    args (공백 구분)
-                  </label>
-                  <Input
-                    placeholder="-y @modelcontextprotocol/server-everything"
-                    value={form.args}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, args: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    환경 변수 (선택사항)
-                  </label>
-                  <textarea
-                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
-                    value={form.env}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, env: e.target.value }))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    KEY=VALUE 형식으로 한 줄에 하나씩 입력하거나, JSON 형식으로
-                    입력할 수 있습니다.
-                    <br />
-                    예: DATABASE_URI=postgresql://localhost/db
-                  </p>
-                </div>
-                <Button type="submit" disabled={saving || !form.name.trim()}>
+
+                {isRemoteMode ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">MCP URL</label>
+                      <Input
+                        placeholder="https://example.com/mcp"
+                        value={manualForm.url}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, url: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        요청 헤더 (선택사항)
+                      </label>
+                      <textarea
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="Authorization=Bearer your-token&#10;X-Api-Key=your-key"
+                        value={manualForm.headers}
+                        onChange={(e) =>
+                          setManualForm((f) => ({
+                            ...f,
+                            headers: e.target.value,
+                          }))
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        인증이 필요한 원격 MCP에 KEY=VALUE 형식으로 헤더를
+                        입력하세요.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">command</label>
+                      <Input
+                        placeholder="npx"
+                        value={manualForm.command}
+                        onChange={(e) =>
+                          setManualForm((f) => ({
+                            ...f,
+                            command: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        args (공백 구분)
+                      </label>
+                      <Input
+                        placeholder="-y @modelcontextprotocol/server-everything"
+                        value={manualForm.args}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, args: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">
+                        환경 변수 (선택사항)
+                      </label>
+                      <textarea
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="DATABASE_URI=postgresql://user:pass@localhost/db&#10;API_KEY=your-key"
+                        value={manualForm.env}
+                        onChange={(e) =>
+                          setManualForm((f) => ({ ...f, env: e.target.value }))
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        KEY=VALUE 형식으로 한 줄에 하나씩 입력하거나, JSON
+                        형식으로 입력할 수 있습니다.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <Button type="submit" disabled={saving || !canSubmitManual}>
                   추가
                 </Button>
               </form>
@@ -350,10 +485,41 @@ export default function McpPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold">{s.name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {s.type}
+                              </Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground font-mono mt-1">
-                              {s.command} {s.args.join(" ")}
+                            <p className="text-sm text-muted-foreground font-mono mt-1 break-all">
+                              {formatServerEndpoint(s)}
                             </p>
+                            {toolErrorsByServer[s.id] && (
+                              <p className="text-sm text-destructive mt-2 whitespace-pre-wrap">
+                                {toolErrorsByServer[s.id]}
+                              </p>
+                            )}
+                            {s.headers && Object.keys(s.headers).length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground">
+                                  요청 헤더:
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {Object.entries(s.headers).map(
+                                    ([key, value]) => (
+                                      <Badge
+                                        key={key}
+                                        variant="outline"
+                                        className="text-xs font-mono"
+                                      >
+                                        {key}=
+                                        {value.length > 20
+                                          ? `${value.substring(0, 20)}...`
+                                          : value}
+                                      </Badge>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            )}
                             {s.env && Object.keys(s.env).length > 0 && (
                               <div className="mt-2 space-y-1">
                                 <p className="text-xs font-medium text-muted-foreground">

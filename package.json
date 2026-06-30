@@ -13,8 +13,9 @@
     "dev:electron": "pnpm --filter magicclaw-desktop dev",
     "start:electron": "pnpm --filter magicclaw-desktop start",
     "dist:electron": "pnpm --filter magicclaw-desktop dist",
-    "lint": "pnpm -r lint",
-    "test": "pnpm -r test"
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test"
   },
   "engines": {
     "node": ">=22"
