@@ -192,10 +192,10 @@ ${SKILLS_GUIDANCE}`;
 
     const runTools = async (state: AgentState) => {
       const result = await toolNode.invoke(state);
-      const toolMessages = (result as { messages?: BaseMessage[] }).messages ?? [];
+      const toolMessages =
+        (result as { messages?: BaseMessage[] }).messages ?? [];
       const memoryTouched = toolMessages.some(
-        (message) =>
-          message instanceof ToolMessage && message.name === "memory"
+        (message) => message instanceof ToolMessage && message.name === "memory"
       );
       if (memoryTouched && options.refreshMemoryBlocks) {
         const refreshed = options.refreshMemoryBlocks();
@@ -266,7 +266,10 @@ ${SKILLS_GUIDANCE}`;
     };
 
     const routeAfterModel = (state: AgentState): string => {
-      if (state.turnExitReason === "budget_exhausted" && !this.hasToolCalls(state)) {
+      if (
+        state.turnExitReason === "budget_exhausted" &&
+        !this.hasToolCalls(state)
+      ) {
         return "summarize";
       }
       if (this.hasToolCalls(state)) return "tools";

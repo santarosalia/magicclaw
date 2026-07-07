@@ -7,6 +7,7 @@ import type {
   McpServerConfigStdio,
   UpdateMcpServerDto,
 } from "../mcp/dto/mcp-server.dto.js";
+import { isMcpServerEnabled } from "../mcp/dto/mcp-server.dto.js";
 import { FileStoreService } from "../common/file-store.service.js";
 
 interface McpStoreData {
@@ -14,8 +15,9 @@ interface McpStoreData {
 }
 
 function normalizeServer(raw: McpServerConfig): McpServerConfig {
+  const enabled = isMcpServerEnabled(raw);
   if (raw.type === "http" || raw.type === "sse") {
-    return raw;
+    return { ...raw, enabled };
   }
   const stdio = raw as McpServerConfigStdio;
   return {
@@ -26,6 +28,7 @@ function normalizeServer(raw: McpServerConfig): McpServerConfig {
     args: stdio.args ?? [],
     env: stdio.env,
     createdAt: stdio.createdAt,
+    enabled,
   };
 }
 
@@ -74,6 +77,10 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
     );
   }
 
+  findEnabled(): McpServerConfig[] {
+    return this.findAll().filter(isMcpServerEnabled);
+  }
+
   findOne(id: string): McpServerConfig | undefined {
     return this.servers.get(id);
   }
@@ -97,6 +104,7 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
         url,
         headers: dto.headers,
         createdAt,
+        enabled: dto.enabled !== false,
       } satisfies McpServerConfigRemote;
     } else {
       const command = dto.command?.trim();
@@ -111,6 +119,7 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
         args: dto.args ?? [],
         env: dto.env,
         createdAt,
+        enabled: dto.enabled !== false,
       } satisfies McpServerConfigStdio;
     }
 
@@ -134,6 +143,7 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
         ...(dto.command !== undefined && { command: dto.command }),
         ...(dto.args !== undefined && { args: dto.args }),
         ...(dto.env !== undefined && { env: dto.env }),
+        ...(dto.enabled !== undefined && { enabled: dto.enabled }),
       };
       this.servers.set(id, updated);
       this.saveToFile();
@@ -148,10 +158,15 @@ export class McpStoreService extends FileStoreService implements OnModuleInit {
       ...(dto.name !== undefined && { name: dto.name }),
       ...(dto.url !== undefined && { url }),
       ...(dto.headers !== undefined && { headers: dto.headers }),
+      ...(dto.enabled !== undefined && { enabled: dto.enabled }),
     };
     this.servers.set(id, updated);
     this.saveToFile();
     return updated;
+  }
+
+  setEnabled(id: string, enabled: boolean): McpServerConfig | undefined {
+    return this.update(id, { enabled });
   }
 
   remove(id: string): boolean {

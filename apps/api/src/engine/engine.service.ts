@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { McpAdapterService } from "../mcp/mcp-adapter.service.js";
 import type { McpServerConfig } from "../mcp/dto/mcp-server.dto.js";
+import { isMcpServerEnabled } from "../mcp/dto/mcp-server.dto.js";
 import { McpStoreService } from "../store/mcp-store.service.js";
 import type {
   FlowRunRequestDto,
@@ -58,22 +59,26 @@ export class EngineService {
     return JSON.stringify(
       this.mcpStore
         .findAll()
-        .map((s) =>
-          s.type === "stdio"
+        .map((s) => {
+          const base = {
+            id: s.id,
+            enabled: isMcpServerEnabled(s),
+          };
+          return s.type === "stdio"
             ? {
-                id: s.id,
+                ...base,
                 type: s.type,
                 command: s.command,
                 args: s.args,
                 env: s.env,
               }
             : {
-                id: s.id,
+                ...base,
                 type: s.type,
                 url: s.url,
                 headers: s.headers,
-              }
-        )
+              };
+        })
         .sort((a, b) => a.id.localeCompare(b.id))
     );
   }
@@ -92,7 +97,7 @@ export class EngineService {
     const cached = toolServerCache.get(toolName);
     if (cached) return cached;
 
-    for (const server of this.mcpStore.findAll()) {
+    for (const server of this.mcpStore.findEnabled()) {
       const result = await this.mcpAdapter.listToolsFromMcpServer(server);
       if (result.tools.some((t) => t.name === toolName)) {
         toolServerCache.set(toolName, server);

@@ -11,7 +11,7 @@ export class ToolingGatewayService {
   ) {}
 
   async listTools(): Promise<{ name: string; description?: string }[]> {
-    const servers = this.mcpStore.findAll();
+    const servers = this.mcpStore.findEnabled();
     const seen = new Set<string>();
     const tools: { name: string; description?: string }[] = [];
     for (const server of servers) {
@@ -30,7 +30,7 @@ export class ToolingGatewayService {
     tools: StructuredToolInterface[];
     close: () => Promise<void>;
   }> {
-    const servers = this.mcpStore.findAll();
+    const servers = this.mcpStore.findEnabled();
     const { tools, close } = await this.mcpAdapter.getMcpToolsAsLangChain(
       servers
     );
