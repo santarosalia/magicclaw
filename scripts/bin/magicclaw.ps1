@@ -14,13 +14,14 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($env:MAGICCLAW_INSTALL_DIR) {
-    $AppRoot = $env:MAGICCLAW_INSTALL_DIR
+    $AppRoot = [IO.Path]::GetFullPath($env:MAGICCLAW_INSTALL_DIR)
 }
 else {
     $AppRoot = (Resolve-Path (Join-Path $ScriptDir '..')).Path
 }
 
 $MagicClawHome = if ($env:MAGICCLAW_HOME) { $env:MAGICCLAW_HOME } else { Join-Path $env:USERPROFILE '.magicclaw' }
+$MagicClawHome = [IO.Path]::GetFullPath($MagicClawHome)
 $RunDir = Join-Path $MagicClawHome 'run'
 $ApiPidFile = Join-Path $RunDir 'api.pid'
 $WebPidFile = Join-Path $RunDir 'web.pid'
@@ -76,18 +77,40 @@ function Initialize-Env {
     Import-DotEnv (Join-Path $MagicClawHome '.env')
 }
 
+function Get-NodeMajorVersion {
+    param([string]$NodeBin)
+
+    $versionText = & $NodeBin --version 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $versionText) {
+        return 0
+    }
+
+    if ($versionText -match '^v?(\d+)\.') {
+        return [int]$Matches[1]
+    }
+
+    return 0
+}
+
 function Test-NodeFts5 {
     param([string]$NodeBin)
 
-    $probe = @'
+    # Avoid node -e on Windows PowerShell: semicolons/quotes in -e scripts are parsed by PS itself.
+    $probeFile = Join-Path $env:TEMP ("magicclaw-fts5-probe-$([guid]::NewGuid().ToString('n')).cjs")
+    try {
+        @'
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(":memory:");
 db.exec("CREATE VIRTUAL TABLE _probe USING fts5(x)");
 db.exec("DROP TABLE _probe");
-'@
+'@ | Set-Content -LiteralPath $probeFile -Encoding UTF8
 
-    & $NodeBin -e $probe *> $null
-    return $LASTEXITCODE -eq 0
+        & $NodeBin $probeFile 1>$null 2>$null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Resolve-Node {
@@ -102,18 +125,25 @@ function Resolve-Node {
         $candidates += $bundledNode
     }
 
+    $usable = @()
     foreach ($candidate in $candidates) {
+        if ((Get-NodeMajorVersion $candidate) -ge 22) {
+            $usable += $candidate
+        }
+    }
+
+    if ($usable.Count -eq 0) {
+        throw 'Node.js 22+ not found. Install Node or re-run the installer.'
+    }
+
+    foreach ($candidate in $usable) {
         if (Test-NodeFts5 $candidate) {
             return $candidate
         }
     }
 
-    if ($candidates.Count -gt 0) {
-        Write-Warn 'Warning: no Node build with SQLite FTS5 found; session search may use LIKE fallback'
-        return $candidates[0]
-    }
-
-    throw 'Node.js 22+ not found. Install Node or re-run the installer.'
+    Write-Warn 'Warning: no Node build with SQLite FTS5 found; session search may use LIKE fallback'
+    return $usable[0]
 }
 
 function Find-WebServer {
@@ -151,6 +181,25 @@ function Test-ProcessRunning {
     return $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)
 }
 
+function Get-ErrorLogPath {
+    param([string]$LogFile)
+    return "$LogFile.err"
+}
+
+function Read-ProcessLogs {
+    param(
+        [string]$LogFile,
+        [int]$Tail = 40
+    )
+
+    $paths = @($LogFile, (Get-ErrorLogPath $LogFile)) | Where-Object { Test-Path -LiteralPath $_ }
+    if ($paths.Count -eq 0) {
+        return @()
+    }
+
+    return Get-Content -LiteralPath $paths -Tail $Tail -ErrorAction SilentlyContinue
+}
+
 function Start-MagicClawProcess {
     param(
         [string]$Name,
@@ -168,9 +217,15 @@ function Start-MagicClawProcess {
         return
     }
 
+    $errorLog = Get-ErrorLogPath $LogFile
     New-Item -ItemType Directory -Force -Path (Split-Path $LogFile -Parent) | Out-Null
-    if (-not (Test-Path -LiteralPath $LogFile)) {
-        New-Item -ItemType File -Force -Path $LogFile | Out-Null
+    foreach ($path in @($LogFile, $errorLog)) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            New-Item -ItemType File -Force -Path $path | Out-Null
+        }
+        else {
+            Clear-Content -LiteralPath $path
+        }
     }
 
     $saved = @{}
@@ -180,13 +235,22 @@ function Start-MagicClawProcess {
     }
 
     try {
+        # Start-Process cannot redirect stdout and stderr to the same file.
         $process = Start-Process -FilePath $NodeBin `
             -ArgumentList $ArgumentList `
             -WorkingDirectory $WorkingDirectory `
             -RedirectStandardOutput $LogFile `
-            -RedirectStandardError $LogFile `
+            -RedirectStandardError $errorLog `
             -PassThru `
-            -NoNewWindow
+            -WindowStyle Hidden
+
+        Start-Sleep -Milliseconds 750
+        if ($process.HasExited) {
+            $logLines = Read-ProcessLogs -LogFile $LogFile
+            $details = if ($logLines.Count -gt 0) { "`n$($logLines -join "`n")" } else { '' }
+            throw "$Name failed to start (exit $($process.ExitCode)).$details"
+        }
+
         Set-Content -LiteralPath $PidFile -Value $process.Id -Encoding ascii
         Write-Ok "$Name started (pid $($process.Id))"
     }
@@ -238,7 +302,7 @@ function Invoke-Start {
     Start-MagicClawProcess -Name 'API' `
         -NodeBin $node `
         -WorkingDirectory (Join-Path $AppRoot 'api') `
-        -ArgumentList @('dist\main.js') `
+        -ArgumentList @('dist/main.js') `
         -PidFile $ApiPidFile `
         -LogFile $ApiLog
 
@@ -247,7 +311,7 @@ function Invoke-Start {
         -NodeBin $node `
         -WorkingDirectory $webWorkDir `
         -ArgumentList @($webServer) `
-        -Environment @{ PORT = [string]$DefaultWebPort; HOSTNAME = $env:HOSTNAME } `
+        -Environment @{ PORT = [string]$DefaultWebPort; HOSTNAME = '127.0.0.1' } `
         -PidFile $WebPidFile `
         -LogFile $WebLog
 
@@ -306,16 +370,24 @@ function Invoke-Logs {
     switch ($Target) {
         'api' {
             if (-not (Test-Path -LiteralPath $ApiLog)) { New-Item -ItemType File -Path $ApiLog | Out-Null }
-            Get-Content -LiteralPath $ApiLog -Tail 20 -Wait
+            $paths = @($ApiLog, (Get-ErrorLogPath $ApiLog)) | Where-Object { Test-Path -LiteralPath $_ }
+            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
         'web' {
             if (-not (Test-Path -LiteralPath $WebLog)) { New-Item -ItemType File -Path $WebLog | Out-Null }
-            Get-Content -LiteralPath $WebLog -Tail 20 -Wait
+            $paths = @($WebLog, (Get-ErrorLogPath $WebLog)) | Where-Object { Test-Path -LiteralPath $_ }
+            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
         default {
             if (-not (Test-Path -LiteralPath $ApiLog)) { New-Item -ItemType File -Path $ApiLog | Out-Null }
             if (-not (Test-Path -LiteralPath $WebLog)) { New-Item -ItemType File -Path $WebLog | Out-Null }
-            Get-Content -LiteralPath $ApiLog, $WebLog -Tail 20 -Wait
+            $paths = @(
+                $ApiLog,
+                (Get-ErrorLogPath $ApiLog),
+                $WebLog,
+                (Get-ErrorLogPath $WebLog)
+            ) | Where-Object { Test-Path -LiteralPath $_ }
+            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
     }
 }

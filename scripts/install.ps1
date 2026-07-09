@@ -145,7 +145,15 @@ function Test-Prerequisites {
         throw 'Node.js 22+ is required. Install from https://nodejs.org/ and re-run.'
     }
 
-    $major = [int](& node -p "process.versions.node.split('.')[0]")
+    $versionText = & node --version 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $versionText) {
+        throw 'Node.js 22+ is required. Install from https://nodejs.org/ and re-run.'
+    }
+
+    $major = 0
+    if ($versionText -match '^v?(\d+)\.') {
+        $major = [int]$Matches[1]
+    }
     if ($major -lt 22) {
         $ver = & node -v
         throw "Node.js 22+ required (found $ver)"
