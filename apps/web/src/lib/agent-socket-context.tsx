@@ -231,7 +231,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     resetToolCallStore();
     streamingContentRef.current = "";
     setStreamingContent("");
-    return session.id;
   }, [resetToolCallStore, userId]);
 
   const resumeConversation = useCallback(

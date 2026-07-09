@@ -10,8 +10,10 @@ import {
 import type {
   CreateMcpServerDto,
   McpServerConfig,
+  SetMcpServerEnabledDto,
   UpdateMcpServerDto,
 } from "./dto/mcp-server.dto.js";
+import { isMcpServerEnabled } from "./dto/mcp-server.dto.js";
 import { McpStoreService } from "../store/mcp-store.service.js";
 import { McpAdapterService } from "./mcp-adapter.service.js";
 
@@ -30,16 +32,31 @@ export class McpController {
   /** 등록된 모든 MCP 서버의 연결 상태 조회 (툴 목록 조회로 연결 검사) */
   @Get("servers/status")
   async listServersStatus(): Promise<
-    { id: string; name: string; status: "ok" | "error"; error?: string }[]
+    {
+      id: string;
+      name: string;
+      enabled: boolean;
+      status: "ok" | "error" | "disabled";
+      error?: string;
+    }[]
   > {
     const servers = this.store.findAll();
     const results = await Promise.all(
       servers.map(async (config) => {
+        if (!isMcpServerEnabled(config)) {
+          return {
+            id: config.id,
+            name: config.name,
+            enabled: false,
+            status: "disabled" as const,
+          };
+        }
         const result = await this.mcpAdapter.listToolsFromMcpServer(config);
         if (result.error) {
           return {
             id: config.id,
             name: config.name,
+            enabled: true,
             status: "error" as const,
             error: result.error,
           };
@@ -47,6 +64,7 @@ export class McpController {
         return {
           id: config.id,
           name: config.name,
+          enabled: true,
           status: "ok" as const,
         };
       })
@@ -70,6 +88,14 @@ export class McpController {
     @Body() dto: UpdateMcpServerDto
   ): McpServerConfig | undefined {
     return this.store.update(id, dto);
+  }
+
+  @Patch("servers/:id/enabled")
+  setServerEnabled(
+    @Param("id") id: string,
+    @Body() dto: SetMcpServerEnabledDto
+  ): McpServerConfig | undefined {
+    return this.store.setEnabled(id, dto.enabled);
   }
 
   @Delete("servers/:id")

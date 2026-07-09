@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.0.0",
   "scripts": {
     "build": "pnpm -r --filter=!magicclaw-desktop build",
+    "build:release": "pnpm -r --filter=!magicclaw-desktop build",
     "build:electron": "pnpm --filter api build && pnpm --filter web build && pnpm --filter magicclaw-desktop build",
     "dev": "pnpm -r --parallel --filter=!magicclaw-desktop dev",
     "dev:api": "pnpm --filter api dev",

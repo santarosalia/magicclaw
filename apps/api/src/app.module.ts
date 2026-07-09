@@ -6,9 +6,11 @@ import { EngineModule } from "./engine/engine.module";
 import { MessengerModule } from "./messenger/messenger.module";
 import { MemoryModule } from "./memory/memory.module";
 import { SessionModule } from "./session/session.module";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [
+    HealthModule,
     McpModule,
     AgentModule,
     LlmModule,

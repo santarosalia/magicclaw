@@ -10,7 +10,8 @@ type LlmStatus = "configured" | "not_configured" | "loading" | "error";
 export interface McpServerStatusItem {
   id: string;
   name: string;
-  status: "ok" | "error";
+  enabled?: boolean;
+  status: "ok" | "error" | "disabled";
   error?: string;
 }
 
@@ -49,7 +50,11 @@ export function ConnectionStatus({
           ? "LLM 오류"
           : "LLM 미설정";
 
-  const errorServers = mcpServers.filter((s) => s.status === "error");
+  const errorServers = mcpServers.filter(
+    (s) => s.enabled !== false && s.status === "error"
+  );
+  const activeServers = mcpServers.filter((s) => s.enabled !== false);
+  const disabledCount = mcpServers.filter((s) => s.enabled === false).length;
   const mcpTooltip =
     errorServers.length > 0
       ? errorServers
@@ -63,9 +68,11 @@ export function ConnectionStatus({
       : mcpStatus === "none"
         ? "MCP 없음"
         : mcpStatus === "ok"
-          ? `MCP ${mcpServers.length}개 정상`
+          ? disabledCount > 0
+            ? `MCP ${activeServers.length}개 정상 (${disabledCount}개 비활성)`
+            : `MCP ${activeServers.length}개 정상`
           : mcpStatus === "partial"
-            ? `MCP ${mcpServers.length - errorServers.length}개 정상 / ${errorServers.length}개 오류`
+            ? `MCP ${activeServers.length - errorServers.length}개 정상 / ${errorServers.length}개 오류`
             : "MCP 오류";
 
   return (

@@ -11,10 +11,11 @@ import { useLlmStatus } from "@/lib/llm-status-context";
 type McpStatus = "loading" | "ok" | "partial" | "error" | "none";
 
 function deriveMcpStatus(servers: McpServerStatusItem[]): McpStatus {
-  if (servers.length === 0) return "none";
-  const errors = servers.filter((s) => s.status === "error").length;
+  const active = servers.filter((s) => s.enabled !== false);
+  if (active.length === 0) return servers.length > 0 ? "none" : "none";
+  const errors = active.filter((s) => s.status === "error").length;
   if (errors === 0) return "ok";
-  if (errors === servers.length) return "error";
+  if (errors === active.length) return "error";
   return "partial";
 }
 

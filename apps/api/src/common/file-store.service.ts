@@ -1,22 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Logger } from "@nestjs/common";
-
-const MAGICCLAW_DIR = join(homedir(), ".magicclaw");
+import { getMagicClawHome } from "./magicclaw-home.js";
 
 export class FileStoreService {
   private static readonly logger = new Logger(FileStoreService.name);
 
   protected ensureDirectory(): void {
-    if (!existsSync(MAGICCLAW_DIR)) {
-      mkdirSync(MAGICCLAW_DIR, { recursive: true });
+    const home = getMagicClawHome();
+    if (!existsSync(home)) {
+      mkdirSync(home, { recursive: true });
     }
   }
 
   protected readFile<T>(filename: string, defaultValue: T): T {
     this.ensureDirectory();
-    const filePath = join(MAGICCLAW_DIR, filename);
+    const filePath = join(getMagicClawHome(), filename);
     if (!existsSync(filePath)) {
       return defaultValue;
     }
@@ -36,7 +35,7 @@ export class FileStoreService {
 
   protected writeFile<T>(filename: string, data: T): void {
     this.ensureDirectory();
-    const filePath = join(MAGICCLAW_DIR, filename);
+    const filePath = join(getMagicClawHome(), filename);
     try {
       writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {

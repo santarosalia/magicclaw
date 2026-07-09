@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -27,6 +28,7 @@ type McpServer = {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  enabled?: boolean;
   createdAt: string;
 };
 
@@ -64,6 +66,9 @@ export default function McpPage() {
   >({});
   const [saving, setSaving] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  const isServerEnabled = (server: McpServer) => server.enabled !== false;
   const fetchServers = useCallback(async () => {
     const res = await fetch("/api/mcp/servers");
     if (!res.ok) return;
@@ -72,6 +77,7 @@ export default function McpPage() {
     const toolMap: Record<string, ToolItem[]> = {};
     const toolErrors: Record<string, string> = {};
     for (const s of data) {
+      if (!isServerEnabled(s)) continue;
       const tr = await fetch(`/api/mcp/servers/${s.id}/tools`);
       const td = (await tr.json()) as { tools: ToolItem[]; error?: string };
       toolMap[s.id] = td.tools ?? [];
@@ -134,11 +140,11 @@ export default function McpPage() {
     setCatalogDrafts((prev) => ({
       ...prev,
       [entry.id]: {
+        ...prev[entry.id],
         customArgs: entry.customArgs?.join(" ") ?? "",
         env: Object.entries(entry.env ?? {})
           .map(([key, value]) => `${key}=${value}`)
           .join("\n"),
-        ...prev[entry.id],
         ...patch,
       },
     }));
@@ -220,6 +226,21 @@ export default function McpPage() {
     if (!confirm("이 MCP 서버를 삭제할까요?")) return;
     await fetch(`/api/mcp/servers/${id}`, { method: "DELETE" });
     await fetchServers();
+  };
+
+  const toggleServerEnabled = async (server: McpServer, enabled: boolean) => {
+    if (togglingId) return;
+    setTogglingId(server.id);
+    try {
+      await fetch(`/api/mcp/servers/${server.id}/enabled`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      await fetchServers();
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   const catalogByCategory = getMcpCatalogByCategory();
@@ -466,7 +487,7 @@ export default function McpPage() {
               <CardHeader>
                 <CardTitle>사용 중인 MCP 서버</CardTitle>
                 <CardDescription>
-                  채팅 시 이 서버들의 도구를 사용할 수 있습니다.
+                  채팅 시 활성화된 서버의 도구만 사용할 수 있습니다.
                 </CardDescription>
               </CardHeader>
               <CardContent className="overflow-y-auto flex-1">
@@ -479,22 +500,38 @@ export default function McpPage() {
                   </p>
                 ) : (
                   <ul className="space-y-3">
-                    {servers.map((s) => (
+                    {servers.map((s) => {
+                      const enabled = isServerEnabled(s);
+                      return (
                       <li key={s.id}>
-                        <div className="flex items-start justify-between gap-4 rounded-lg border bg-card p-4">
+                        <div
+                          className={`flex items-start justify-between gap-4 rounded-lg border bg-card p-4 ${
+                            !enabled ? "opacity-60" : ""
+                          }`}
+                        >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold">{s.name}</span>
                               <Badge variant="outline" className="text-xs">
                                 {s.type}
                               </Badge>
+                              {!enabled && (
+                                <Badge variant="secondary" className="text-xs">
+                                  비활성
+                                </Badge>
+                              )}
                             </div>
                             <p className="text-sm text-muted-foreground font-mono mt-1 break-all">
                               {formatServerEndpoint(s)}
                             </p>
-                            {toolErrorsByServer[s.id] && (
+                            {enabled && toolErrorsByServer[s.id] && (
                               <p className="text-sm text-destructive mt-2 whitespace-pre-wrap">
                                 {toolErrorsByServer[s.id]}
+                              </p>
+                            )}
+                            {!enabled && (
+                              <p className="text-sm text-muted-foreground mt-2">
+                                비활성화된 서버는 채팅에서 사용되지 않습니다.
                               </p>
                             )}
                             {s.headers && Object.keys(s.headers).length > 0 && (
@@ -541,7 +578,7 @@ export default function McpPage() {
                                 </div>
                               </div>
                             )}
-                            {(toolsByServer[s.id]?.length ?? 0) > 0 && (
+                            {enabled && (toolsByServer[s.id]?.length ?? 0) > 0 && (
                               <div className="flex flex-wrap gap-1 mt-2">
                                 {toolsByServer[s.id].slice(0, 8).map((t) => (
                                   <Badge
@@ -560,16 +597,28 @@ export default function McpPage() {
                               </div>
                             )}
                           </div>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => removeServer(s.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex flex-col items-end gap-1.5 shrink-0">
+                            <Switch
+                              id={`mcp-enabled-${s.id}`}
+                              checked={enabled}
+                              disabled={togglingId === s.id}
+                              aria-label={`${s.name} ${enabled ? "비활성화" : "활성화"}`}
+                              onCheckedChange={(checked) =>
+                                void toggleServerEnabled(s, checked)
+                              }
+                            />
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => removeServer(s.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
               </CardContent>
