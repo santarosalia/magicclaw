@@ -85,11 +85,17 @@ mkdir -p "$STAGING/web/apps/web/.next"
 cp -R "$WEB_STATIC" "$STAGING/web/apps/web/.next/static"
 cp -R "$WEB_PUBLIC" "$STAGING/web/apps/web/public"
 
+echo "==> Materialize web standalone dependencies"
+chmod +x "$ROOT/scripts/release/materialize-web-standalone.sh"
+bash "$ROOT/scripts/release/materialize-web-standalone.sh" "$STAGING/web"
+
 echo "==> Smoke test staged bundle"
 # shellcheck source=../lib/node-fts5-check.sh
 source "$ROOT/scripts/lib/node-fts5-check.sh"
 NODE_BIN="$(command -v node)"
 bash "$ROOT/scripts/release/smoke-test-bundle.sh" "$STAGING" "$NODE_BIN"
+chmod +x "$ROOT/scripts/release/smoke-test-web-standalone.sh"
+bash "$ROOT/scripts/release/smoke-test-web-standalone.sh" "$STAGING/web" "$NODE_BIN"
 if [[ "$PLATFORM" == windows-* ]]; then
   tmp_home="$(mktemp -d)"
   if command -v pwsh >/dev/null 2>&1; then
