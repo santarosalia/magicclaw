@@ -1,11 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { getMemoriesDir } from "../common/magicclaw-home.js";
 
 const ENTRY_DELIMITER = "\n§\n";
@@ -312,7 +306,7 @@ export class BuiltinCuratedStore {
 
   private saveToDisk(target: MemoryTarget): void {
     const path = this.pathFor(target);
-    mkdirSync(join(path, ".."), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     const content = this.joinEntries(this.entriesFor(target));
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, content, "utf-8");
