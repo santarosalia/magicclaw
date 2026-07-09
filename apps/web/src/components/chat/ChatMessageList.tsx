@@ -10,7 +10,7 @@ import type { ChatMessage } from "@/lib/agent-socket-context";
 const markdownPlugins = {
   remark: [remarkGfm],
   rehype: [rehypeRaw, rehypeHighlight],
-} as const;
+};
 
 const ChatBubble = memo(function ChatBubble({
   message,

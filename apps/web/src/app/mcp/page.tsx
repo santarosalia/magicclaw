@@ -140,11 +140,11 @@ export default function McpPage() {
     setCatalogDrafts((prev) => ({
       ...prev,
       [entry.id]: {
+        ...prev[entry.id],
         customArgs: entry.customArgs?.join(" ") ?? "",
         env: Object.entries(entry.env ?? {})
           .map(([key, value]) => `${key}=${value}`)
           .join("\n"),
-        ...prev[entry.id],
         ...patch,
       },
     }));

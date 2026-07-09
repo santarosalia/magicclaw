@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+# MagicClaw launcher — start/stop API + Web from a release bundle.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+MAGICCLAW_HOME="${MAGICCLAW_HOME:-$HOME/.magicclaw}"
+RUN_DIR="$MAGICCLAW_HOME/run"
+API_PID_FILE="$RUN_DIR/api.pid"
+WEB_PID_FILE="$RUN_DIR/web.pid"
+API_LOG="$RUN_DIR/api.log"
+WEB_LOG="$RUN_DIR/web.log"
+
+DEFAULT_PORT=4000
+DEFAULT_WEB_PORT=3000
+
+VERSION_FILE="$APP_ROOT/VERSION"
+GITHUB_REPO="${MAGICCLAW_GITHUB_REPO:-santarosalia/magicclaw}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+resolve_node() {
+  if [[ -x "$APP_ROOT/node/bin/node" ]]; then
+    echo "$APP_ROOT/node/bin/node"
+    return
+  fi
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return
+  fi
+  echo "Error: Node.js not found. Re-run the installer or install Node 22+." >&2
+  exit 1
+}
+
+load_env() {
+  mkdir -p "$MAGICCLAW_HOME" "$RUN_DIR"
+  export MAGICCLAW_HOME
+  export PORT="${PORT:-$DEFAULT_PORT}"
+  export WEB_ORIGIN="${WEB_ORIGIN:-http://localhost:$DEFAULT_WEB_PORT}"
+  export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-http://localhost:$DEFAULT_PORT}"
+  export HOSTNAME="${HOSTNAME:-127.0.0.1}"
+
+  if [[ -f "$MAGICCLAW_HOME/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$MAGICCLAW_HOME/.env"
+    set +a
+  fi
+}
+
+find_web_server() {
+  local candidates=(
+    "$APP_ROOT/web/apps/web/server.js"
+    "$APP_ROOT/web/server.js"
+  )
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "Error: Next.js standalone server.js not found under $APP_ROOT/web" >&2
+  exit 1
+}
+
+is_running() {
+  local pid_file="$1"
+  if [[ ! -f "$pid_file" ]]; then
+    return 1
+  fi
+  local pid
+  pid="$(cat "$pid_file")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+cmd_start() {
+  load_env
+  local node
+  node="$(resolve_node)"
+  local web_server
+  web_server="$(find_web_server)"
+  local web_dir
+  web_dir="$(dirname "$web_server")"
+
+  if is_running "$API_PID_FILE"; then
+    echo -e "${YELLOW}API already running (pid $(cat "$API_PID_FILE"))${NC}"
+  else
+    echo "Starting MagicClaw API on port $PORT..."
+    (
+      cd "$APP_ROOT/api"
+      nohup "$node" dist/main.js >>"$API_LOG" 2>&1 &
+      echo $! >"$API_PID_FILE"
+    )
+    echo -e "${GREEN}API started (pid $(cat "$API_PID_FILE"))${NC}"
+  fi
+
+  if is_running "$WEB_PID_FILE"; then
+    echo -e "${YELLOW}Web already running (pid $(cat "$WEB_PID_FILE"))${NC}"
+  else
+    echo "Starting MagicClaw Web on port $DEFAULT_WEB_PORT..."
+    (
+      cd "$(dirname "$(dirname "$web_dir")")"
+      PORT="$DEFAULT_WEB_PORT" HOSTNAME="$HOSTNAME" \
+        nohup "$node" "$web_server" >>"$WEB_LOG" 2>&1 &
+      echo $! >"$WEB_PID_FILE"
+    )
+    echo -e "${GREEN}Web started (pid $(cat "$WEB_PID_FILE"))${NC}"
+  fi
+
+  echo ""
+  echo "MagicClaw is running:"
+  echo "  Web UI:  http://localhost:$DEFAULT_WEB_PORT"
+  echo "  API:     http://localhost:$PORT"
+  echo "  Logs:    magicclaw logs"
+}
+
+stop_one() {
+  local name="$1"
+  local pid_file="$2"
+  if ! is_running "$pid_file"; then
+    rm -f "$pid_file"
+    echo "$name is not running"
+    return 0
+  fi
+  local pid
+  pid="$(cat "$pid_file")"
+  kill "$pid" 2>/dev/null || true
+  local i
+  for i in $(seq 1 20); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pid_file"
+  echo -e "${GREEN}$name stopped${NC}"
+}
+
+cmd_stop() {
+  load_env
+  stop_one "API" "$API_PID_FILE"
+  stop_one "Web" "$WEB_PID_FILE"
+}
+
+cmd_status() {
+  load_env
+  local version="unknown"
+  if [[ -f "$VERSION_FILE" ]]; then
+    version="$(tr -d '[:space:]' <"$VERSION_FILE")"
+  fi
+  echo "MagicClaw $version"
+  echo "  Home: $MAGICCLAW_HOME"
+  echo "  App:  $APP_ROOT"
+  if is_running "$API_PID_FILE"; then
+    echo -e "  API:  ${GREEN}running${NC} (pid $(cat "$API_PID_FILE"), port $PORT)"
+  else
+    echo -e "  API:  ${RED}stopped${NC}"
+  fi
+  if is_running "$WEB_PID_FILE"; then
+    echo -e "  Web:  ${GREEN}running${NC} (pid $(cat "$WEB_PID_FILE"), port $DEFAULT_WEB_PORT)"
+  else
+    echo -e "  Web:  ${RED}stopped${NC}"
+  fi
+}
+
+cmd_logs() {
+  load_env
+  local target="${1:-all}"
+  case "$target" in
+    api)
+      touch "$API_LOG"
+      tail -f "$API_LOG"
+      ;;
+    web)
+      touch "$WEB_LOG"
+      tail -f "$WEB_LOG"
+      ;;
+    all|*)
+      touch "$API_LOG" "$WEB_LOG"
+      tail -f "$API_LOG" "$WEB_LOG"
+      ;;
+  esac
+}
+
+prompt_if_tty() {
+  local prompt="$1"
+  local var_name="$2"
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt" "$var_name" || true
+  fi
+}
+
+cmd_setup() {
+  load_env
+  mkdir -p "$MAGICCLAW_HOME/skills" "$MAGICCLAW_HOME/memories" "$RUN_DIR"
+
+  local env_file="$MAGICCLAW_HOME/.env"
+  if [[ ! -f "$env_file" ]]; then
+    if [[ -f "$APP_ROOT/share/env.example" ]]; then
+      cp "$APP_ROOT/share/env.example" "$env_file"
+    else
+      cat >"$env_file" <<'EOF'
+# MagicClaw configuration
+OPENAI_API_KEY=
+
+# API server port (default 4000)
+# PORT=4000
+
+# Web UI port is fixed at 3000 by the launcher
+
+# CORS origin for API (default http://localhost:3000)
+# WEB_ORIGIN=http://localhost:3000
+
+# Mem0 Platform (optional)
+# MEM0_API_KEY=m0-...
+EOF
+    fi
+    echo "Created $env_file"
+  fi
+
+  if ! grep -q '^OPENAI_API_KEY=.\+' "$env_file" 2>/dev/null; then
+    local key=""
+    prompt_if_tty "Enter OPENAI_API_KEY (required for chat): " key
+    if [[ -n "$key" ]]; then
+      if grep -q '^OPENAI_API_KEY=' "$env_file"; then
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+          sed -i '' "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$key|" "$env_file"
+        else
+          sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$key|" "$env_file"
+        fi
+      else
+        echo "OPENAI_API_KEY=$key" >>"$env_file"
+      fi
+      echo -e "${GREEN}OPENAI_API_KEY saved${NC}"
+    else
+      echo -e "${YELLOW}OPENAI_API_KEY not set — edit $env_file before chatting${NC}"
+    fi
+  fi
+
+  echo ""
+  echo "Setup complete. Run: magicclaw start"
+}
+
+detect_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Linux) os="linux" ;;
+    Darwin) os="darwin" ;;
+    *) echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+  esac
+  echo "${os}-${arch}"
+}
+
+cmd_update() {
+  load_env
+  local platform version asset_name url tmpdir
+  platform="$(detect_platform)"
+  version="${1:-}"
+
+  if [[ -z "$version" ]]; then
+    version="$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  fi
+  if [[ -z "$version" ]]; then
+    echo "Error: could not resolve latest release version" >&2
+    exit 1
+  fi
+
+  asset_name="magicclaw-${version#v}-${platform}.tar.gz"
+  url="https://github.com/$GITHUB_REPO/releases/download/$version/$asset_name"
+
+  echo "Updating MagicClaw to $version ($platform)..."
+  cmd_stop || true
+
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  curl -fsSL "$url" -o "$tmpdir/bundle.tar.gz"
+  tar -xzf "$tmpdir/bundle.tar.gz" -C "$tmpdir"
+
+  local extract_dir="$tmpdir"
+  if [[ -d "$tmpdir/magicclaw" ]]; then
+    extract_dir="$tmpdir/magicclaw"
+  fi
+
+  rm -rf "$APP_ROOT/api" "$APP_ROOT/web" "$APP_ROOT/share"
+  [[ -d "$APP_ROOT/node" ]] || true
+  cp -R "$extract_dir"/. "$APP_ROOT/"
+  chmod +x "$APP_ROOT/bin/magicclaw"
+
+  echo -e "${GREEN}Updated to $version${NC}"
+  echo "Run: magicclaw start"
+}
+
+cmd_help() {
+  cat <<EOF
+MagicClaw — AI agent with MCP server management
+
+Usage: magicclaw <command> [options]
+
+Commands:
+  start          Start API and Web servers
+  stop           Stop running servers
+  status         Show version and process status
+  setup          Initialize ~/.magicclaw and configure .env
+  update [ver]   Download and install latest release (or specific version tag)
+  logs [api|web] Tail server logs (default: both)
+
+Environment:
+  MAGICCLAW_HOME   Data directory (default: ~/.magicclaw)
+  PORT             API port (default: 4000)
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    start) cmd_start "$@" ;;
+    stop) cmd_stop "$@" ;;
+    status) cmd_status "$@" ;;
+    setup) cmd_setup "$@" ;;
+    update) cmd_update "$@" ;;
+    logs) cmd_logs "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+      echo "Unknown command: $cmd" >&2
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

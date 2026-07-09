@@ -10,5 +10,6 @@ dist
 coverage
 .turbo
 release
+dist/release
 .pnpm-store
 out

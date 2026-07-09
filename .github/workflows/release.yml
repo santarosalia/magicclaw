@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+          - os: darwin
+            arch: x64
+            runner: macos-13
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+
+      - name: Install dependencies
+        run: CI=true pnpm install --frozen-lockfile
+
+      - name: Build release bundle
+        env:
+          VERSION: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.os }}-${{ matrix.arch }}
+        run: bash scripts/release/build-bundle.sh
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/release/magicclaw-*.tar.gz
+            dist/release/magicclaw-*.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          pattern: bundle-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release/magicclaw-*.tar.gz
+            dist/release/magicclaw-*.sha256
+            scripts/install.sh
+          generate_release_notes: true
