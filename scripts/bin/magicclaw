@@ -79,6 +79,13 @@ load_env() {
     source "$MAGICCLAW_HOME/.env"
     set +a
   fi
+
+  local flag='--disable-warning=ExperimentalWarning'
+  case " ${NODE_OPTIONS:-} " in
+    *" $flag "*) ;;
+    *) NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$flag" ;;
+  esac
+  export NODE_OPTIONS
 }
 
 find_web_server() {

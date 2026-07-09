@@ -75,6 +75,26 @@ function Initialize-Env {
     if (-not $env:HOSTNAME) { $env:HOSTNAME = '127.0.0.1' }
 
     Import-DotEnv (Join-Path $MagicClawHome '.env')
+    Set-SqliteNodeOptions
+}
+
+function Set-SqliteNodeOptions {
+    $flag = '--disable-warning=ExperimentalWarning'
+    $existing = [Environment]::GetEnvironmentVariable('NODE_OPTIONS', 'Process')
+    if ([string]::IsNullOrWhiteSpace($existing)) {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $flag, 'Process')
+        $env:NODE_OPTIONS = $flag
+        return
+    }
+
+    if ($existing -split '\s+' | Where-Object { $_ -eq $flag }) {
+        $env:NODE_OPTIONS = $existing
+        return
+    }
+
+    $merged = "$existing $flag"
+    [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $merged, 'Process')
+    $env:NODE_OPTIONS = $merged
 }
 
 function Get-NodeMajorVersion {
@@ -92,21 +112,43 @@ function Get-NodeMajorVersion {
     return 0
 }
 
+function Write-Utf8FileNoBom {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 function Test-NodeFts5 {
     param([string]$NodeBin)
 
     # Avoid node -e on Windows PowerShell: semicolons/quotes in -e scripts are parsed by PS itself.
     $probeFile = Join-Path $env:TEMP ("magicclaw-fts5-probe-$([guid]::NewGuid().ToString('n')).cjs")
     try {
-        @'
+        $probeScript = @'
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(":memory:");
 db.exec("CREATE VIRTUAL TABLE _probe USING fts5(x)");
 db.exec("DROP TABLE _probe");
-'@ | Set-Content -LiteralPath $probeFile -Encoding UTF8
+'@
+        Write-Utf8FileNoBom -Path $probeFile -Content $probeScript
 
+        $prevNodeOptions = $env:NODE_OPTIONS
+        Set-SqliteNodeOptions
         & $NodeBin $probeFile 1>$null 2>$null
-        return $LASTEXITCODE -eq 0
+        $ok = $LASTEXITCODE -eq 0
+        if ($null -eq $prevNodeOptions) {
+            Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue
+            [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $null, 'Process')
+        }
+        else {
+            $env:NODE_OPTIONS = $prevNodeOptions
+            [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $prevNodeOptions, 'Process')
+        }
+        return $ok
     }
     finally {
         Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
@@ -181,6 +223,79 @@ function Test-ProcessRunning {
     return $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)
 }
 
+function Sync-RuntimeEnvironment {
+    param([hashtable]$Extra = @{})
+
+    $env:MAGICCLAW_HOME = $MagicClawHome
+    if (-not $env:PORT) { $env:PORT = [string]$DefaultPort }
+    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$DefaultWebPort" }
+    if (-not $env:NEXT_PUBLIC_API_URL) { $env:NEXT_PUBLIC_API_URL = "http://localhost:$($env:PORT)" }
+    if (-not $env:HOSTNAME) { $env:HOSTNAME = '127.0.0.1' }
+    Set-SqliteNodeOptions
+
+    foreach ($key in $Extra.Keys) {
+        Set-Item -Path "Env:$key" -Value ([string]$Extra[$key])
+    }
+}
+
+function Test-ApiHealth {
+    param(
+        [int]$Port,
+        [int]$ProcessId,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($ProcessId -gt 0 -and -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+
+        try {
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -eq 200) {
+                return $true
+            }
+        }
+        catch {
+            # API still booting
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    return $false
+}
+
+function Test-WebHealth {
+    param(
+        [int]$Port,
+        [int]$ProcessId,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($ProcessId -gt 0 -and -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+
+        try {
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+                return $true
+            }
+        }
+        catch {
+            # Web still booting
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    return $false
+}
+
 function Get-ErrorLogPath {
     param([string]$LogFile)
     return "$LogFile.err"
@@ -208,7 +323,8 @@ function Start-MagicClawProcess {
         [string[]]$ArgumentList,
         [hashtable]$Environment = @{},
         [string]$PidFile,
-        [string]$LogFile
+        [string]$LogFile,
+        [scriptblock]$ReadyCheck
     )
 
     if (Test-ProcessRunning $PidFile) {
@@ -231,21 +347,34 @@ function Start-MagicClawProcess {
     $saved = @{}
     foreach ($key in $Environment.Keys) {
         $saved[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
-        [Environment]::SetEnvironmentVariable($key, [string]$Environment[$key], 'Process')
     }
 
+    Sync-RuntimeEnvironment -Extra $Environment
+
     try {
-        # Start-Process cannot redirect stdout and stderr to the same file.
+        # Console apps like node.exe must use -NoNewWindow with redirected streams.
+        # -WindowStyle Hidden can make node exit immediately on Windows.
         $process = Start-Process -FilePath $NodeBin `
             -ArgumentList $ArgumentList `
             -WorkingDirectory $WorkingDirectory `
             -RedirectStandardOutput $LogFile `
             -RedirectStandardError $errorLog `
             -PassThru `
-            -WindowStyle Hidden
+            -NoNewWindow
 
-        Start-Sleep -Milliseconds 750
-        if ($process.HasExited) {
+        $ready = $false
+        if ($ReadyCheck) {
+            $ready = [bool](& $ReadyCheck $process.Id)
+        }
+        else {
+            Start-Sleep -Milliseconds 750
+            $ready = -not $process.HasExited
+        }
+
+        if (-not $ready -or $process.HasExited) {
+            if (-not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
             $logLines = Read-ProcessLogs -LogFile $LogFile
             $details = if ($logLines.Count -gt 0) { "`n$($logLines -join "`n")" } else { '' }
             throw "$Name failed to start (exit $($process.ExitCode)).$details"
@@ -258,9 +387,11 @@ function Start-MagicClawProcess {
         foreach ($key in $saved.Keys) {
             if ($null -eq $saved[$key]) {
                 [Environment]::SetEnvironmentVariable($key, $null, 'Process')
+                Remove-Item "Env:$key" -ErrorAction SilentlyContinue
             }
             else {
                 [Environment]::SetEnvironmentVariable($key, $saved[$key], 'Process')
+                Set-Item -Path "Env:$key" -Value $saved[$key]
             }
         }
     }
@@ -281,10 +412,8 @@ function Stop-MagicClawProcess {
     $processId = [int]((Get-Content -LiteralPath $PidFile -Raw).Trim())
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($process) {
-        $process.CloseMainWindow() | Out-Null
-        if (-not $process.WaitForExit(5000)) {
-            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-        }
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        $process.WaitForExit(5000) | Out-Null
     }
 
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
@@ -297,28 +426,51 @@ function Invoke-Start {
     $webServer = Find-WebServer
     $webDir = Split-Path $webServer -Parent
     $webWorkDir = Split-Path (Split-Path $webDir -Parent) -Parent
+    $apiDir = Join-Path $AppRoot 'api'
+    $apiEntry = Join-Path $apiDir 'dist\main.js'
+    if (-not (Test-Path -LiteralPath $apiEntry)) {
+        throw "API entry not found: $apiEntry"
+    }
 
-    Write-Info "Starting MagicClaw API on port $($env:PORT)..."
+    $webEntry = Join-Path $webWorkDir 'apps\web\server.js'
+    if (-not (Test-Path -LiteralPath $webEntry)) {
+        $webEntry = $webServer
+    }
+    else {
+        $webEntry = 'apps/web/server.js'
+    }
+
+    $apiPort = [int]$env:PORT
+
+    Write-Info "Starting MagicClaw API on port $apiPort..."
     Start-MagicClawProcess -Name 'API' `
         -NodeBin $node `
-        -WorkingDirectory (Join-Path $AppRoot 'api') `
+        -WorkingDirectory $apiDir `
         -ArgumentList @('dist/main.js') `
         -PidFile $ApiPidFile `
-        -LogFile $ApiLog
+        -LogFile $ApiLog `
+        -ReadyCheck {
+            param($ProcessId)
+            Test-ApiHealth -Port $apiPort -ProcessId $ProcessId
+        }
 
     Write-Info "Starting MagicClaw Web on port $DefaultWebPort..."
     Start-MagicClawProcess -Name 'Web' `
         -NodeBin $node `
         -WorkingDirectory $webWorkDir `
-        -ArgumentList @($webServer) `
+        -ArgumentList @($webEntry) `
         -Environment @{ PORT = [string]$DefaultWebPort; HOSTNAME = '127.0.0.1' } `
         -PidFile $WebPidFile `
-        -LogFile $WebLog
+        -LogFile $WebLog `
+        -ReadyCheck {
+            param($ProcessId)
+            Test-WebHealth -Port $DefaultWebPort -ProcessId $ProcessId
+        }
 
     Write-Host ''
     Write-Info 'MagicClaw is running:'
     Write-Info "  Web UI:  http://localhost:$DefaultWebPort"
-    Write-Info "  API:     http://localhost:$($env:PORT)"
+    Write-Info "  API:     http://localhost:$apiPort"
     Write-Info '  Logs:    magicclaw logs'
 }
 
@@ -326,6 +478,29 @@ function Invoke-Stop {
     Initialize-Env
     Stop-MagicClawProcess -Name 'API' -PidFile $ApiPidFile
     Stop-MagicClawProcess -Name 'Web' -PidFile $WebPidFile
+}
+
+function Show-StoppedLogHints {
+    param(
+        [string]$Name,
+        [string]$LogFile,
+        [bool]$Running
+    )
+
+    if ($Running) {
+        return
+    }
+
+    $logLines = Read-ProcessLogs -LogFile $LogFile -Tail 8
+    if ($logLines.Count -eq 0) {
+        Write-Warn "  $Name log: $LogFile (empty — run: magicclaw start)"
+        return
+    }
+
+    Write-Warn "  Recent $Name log:"
+    foreach ($line in $logLines) {
+        Write-Host "    $line"
+    }
 }
 
 function Invoke-Status {
@@ -340,7 +515,8 @@ function Invoke-Status {
     Write-Info "  Home: $MagicClawHome"
     Write-Info "  App:  $AppRoot"
 
-    if (Test-ProcessRunning $ApiPidFile) {
+    $apiRunning = Test-ProcessRunning $ApiPidFile
+    if ($apiRunning) {
         $pidValue = (Get-Content -LiteralPath $ApiPidFile -Raw).Trim()
         Write-Host "  API:  " -NoNewline
         Write-Ok "running (pid $pidValue, port $($env:PORT))"
@@ -348,9 +524,11 @@ function Invoke-Status {
     else {
         Write-Host '  API:  ' -NoNewline
         Write-Err 'stopped'
+        Show-StoppedLogHints -Name 'API' -LogFile $ApiLog -Running:$false
     }
 
-    if (Test-ProcessRunning $WebPidFile) {
+    $webRunning = Test-ProcessRunning $WebPidFile
+    if ($webRunning) {
         $pidValue = (Get-Content -LiteralPath $WebPidFile -Raw).Trim()
         Write-Host '  Web:  ' -NoNewline
         Write-Ok "running (pid $pidValue, port $DefaultWebPort)"
@@ -358,6 +536,7 @@ function Invoke-Status {
     else {
         Write-Host '  Web:  ' -NoNewline
         Write-Err 'stopped'
+        Show-StoppedLogHints -Name 'Web' -LogFile $WebLog -Running:$false
     }
 }
 
