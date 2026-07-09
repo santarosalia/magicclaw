@@ -133,6 +133,14 @@ magicclaw update
 curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 ```
 
+---
+
+## 개발자 설치 (소스에서)
+
+### 요구 사항
+
+- Node.js 22+
+- pnpm 10
 
 ```bash
 pnpm install
