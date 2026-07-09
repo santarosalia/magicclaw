@@ -44,8 +44,9 @@ if [[ "$PLATFORM" == windows-* ]]; then
     sed -i 's/\r$//' "$script" 2>/dev/null || sed -i '' 's/\r$//' "$script"
   done
 fi
-if [[ "$PLATFORM" == windows-* ]] && [[ -f scripts/bin/magicclaw.cmd ]]; then
+if [[ "$PLATFORM" == windows-* ]]; then
   cp scripts/bin/magicclaw.cmd "$STAGING/bin/magicclaw.cmd"
+  cp scripts/bin/magicclaw.ps1 "$STAGING/bin/magicclaw.ps1"
 fi
 echo "$VERSION" >"$STAGING/VERSION"
 
@@ -89,12 +90,37 @@ echo "==> Smoke test staged bundle"
 source "$ROOT/scripts/lib/node-fts5-check.sh"
 NODE_BIN="$(command -v node)"
 bash "$ROOT/scripts/release/smoke-test-bundle.sh" "$STAGING" "$NODE_BIN"
-if ! MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >/dev/null 2>&1; then
-  echo "Error: magicclaw status failed in staged bundle" >&2
-  MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >&2 || true
-  exit 1
+if [[ "$PLATFORM" == windows-* ]]; then
+  tmp_home="$(mktemp -d)"
+  if command -v pwsh >/dev/null 2>&1; then
+    if ! MAGICCLAW_HOME="$tmp_home" pwsh -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >/dev/null 2>&1; then
+      echo "Error: magicclaw.ps1 status failed in staged bundle" >&2
+      MAGICCLAW_HOME="$tmp_home" pwsh -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >&2 || true
+      rm -rf "$tmp_home"
+      exit 1
+    fi
+  elif command -v powershell >/dev/null 2>&1; then
+    if ! MAGICCLAW_HOME="$tmp_home" powershell -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >/dev/null 2>&1; then
+      echo "Error: magicclaw.ps1 status failed in staged bundle" >&2
+      MAGICCLAW_HOME="$tmp_home" powershell -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >&2 || true
+      rm -rf "$tmp_home"
+      exit 1
+    fi
+  else
+    echo "Error: pwsh or powershell required for Windows bundle smoke test" >&2
+    rm -rf "$tmp_home"
+    exit 1
+  fi
+  rm -rf "$tmp_home"
+  echo "CLI smoke test passed: magicclaw.ps1 status"
+else
+  if ! MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >/dev/null 2>&1; then
+    echo "Error: magicclaw status failed in staged bundle" >&2
+    MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >&2 || true
+    exit 1
+  fi
+  echo "CLI smoke test passed: magicclaw status"
 fi
-echo "CLI smoke test passed: magicclaw status"
 
 echo "==> Create tarball"
 mkdir -p "$OUT_DIR"

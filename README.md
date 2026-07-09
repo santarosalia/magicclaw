@@ -18,7 +18,7 @@
 
 - **Node.js 22+** (릴리스 번들은 Node를 포함하지 않음 — [nodejs.org](https://nodejs.org/)에서 설치)
 - **Linux / macOS**: `curl`, `tar`, `bash`
-- **Windows**: PowerShell 5.1+ (설치), [Git for Windows](https://git-scm.com/download/win) (CLI 실행 권장) 또는 WSL
+- **Windows**: PowerShell 5.1+ (설치·CLI), Node.js 22+
 
 지원 플랫폼 (GitHub Releases):
 
@@ -105,7 +105,7 @@ irm ... -OutFile install.ps1
 
 파이프 설치 시 환경 변수: `MAGICCLAW_VERSION`, `MAGICCLAW_HOME`, `MAGICCLAW_SKIP_SETUP=1`, `MAGICCLAW_NON_INTERACTIVE=1`
 
-> `magicclaw` CLI는 Git Bash(`bash`)가 PATH에 있으면 bash 런처로 위임합니다. Git for Windows 설치를 권장합니다. Git Bash 없이도 설치·`.env` 초기화는 PowerShell에서 완료됩니다.
+> Windows CLI(`start`/`stop`/`status` 등)는 네이티브 PowerShell 런처(`magicclaw.ps1`)로 동작합니다. Git Bash는 필요하지 않습니다.
 
 **Git Bash에서 설치 (대안):**
 
@@ -117,7 +117,7 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 
 1. [Releases](https://github.com/santarosalia/magicclaw/releases)에서 `magicclaw-*-windows-x64.tar.gz` 다운로드
 2. `%USERPROFILE%\.magicclaw\app` 에 압축 해제 (`tar -xzf ... -C ...`)
-3. Git Bash에서 `bash ~/.magicclaw/app/bin/magicclaw setup && bash ~/.magicclaw/app/bin/magicclaw start`
+3. PowerShell에서 `magicclaw setup && magicclaw start` (또는 `%USERPROFILE%\.magicclaw\app\bin\magicclaw.cmd setup`)
 
 ---
 

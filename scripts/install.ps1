@@ -118,6 +118,28 @@ function Get-MagicClawPlatform {
     return 'windows-x64'
 }
 
+function Invoke-MagicClawLauncher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AppInstallDir,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$LauncherArgs
+    )
+
+    $launcher = Join-Path $AppInstallDir 'bin\magicclaw.ps1'
+    if (-not (Test-Path -LiteralPath $launcher)) {
+        throw "magicclaw.ps1 not found at $launcher"
+    }
+
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        & $pwsh.Source -NoProfile -ExecutionPolicy Bypass -File $launcher @LauncherArgs
+        return
+    }
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $launcher @LauncherArgs
+}
+
 function Test-Prerequisites {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
         throw 'Node.js 22+ is required. Install from https://nodejs.org/ and re-run.'
@@ -236,21 +258,15 @@ function Install-Shim {
         # Convert-Path can fail on some UNC/edge paths; keep the provided path.
     }
 
-    $bashLauncher = ($resolvedAppRoot -replace '\\', '/') + '/bin/magicclaw'
     $bashMagicClawHome = $MagicClawHome -replace '\\', '/'
 
+    # Delegate to the bundle's native PowerShell launcher via magicclaw.cmd.
     @"
 @echo off
 setlocal
 if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=$bashMagicClawHome"
 set "MAGICCLAW_INSTALL_DIR=$($resolvedAppRoot -replace '\\', '/')"
-set "APP_ROOT=$($resolvedAppRoot -replace '\\', '/')"
-where bash >nul 2>&1
-if %ERRORLEVEL%==0 (
-  bash "$bashLauncher" %*
-  exit /b %ERRORLEVEL%
-)
-call "%APP_ROOT%\bin\magicclaw.cmd" %*
+call "$resolvedAppRoot\bin\magicclaw.cmd" %*
 "@ | Set-Content -LiteralPath $ShimPath -Encoding ASCII
 
     Write-Host "Installed CLI shim: $ShimPath" -ForegroundColor Green
@@ -302,84 +318,9 @@ function Invoke-MagicClawSetup {
         return
     }
 
-    $env:MAGICCLAW_HOME = ($MagicClawHome -replace '\\', '/')
-    $bash = Get-Command bash -ErrorAction SilentlyContinue
-    $launcher = Join-Path $Dir 'bin\magicclaw'
-    $bashLauncher = ($launcher -replace '\\', '/')
-
-    if ($bash -and (Test-Path -LiteralPath $launcher)) {
-        try {
-            if ($NonInteractive) {
-                & bash $bashLauncher setup 2>$null
-            }
-            else {
-                & bash $bashLauncher setup
-            }
-            return
-        }
-        catch {
-            Write-Host 'magicclaw setup via Git Bash failed; falling back to inline setup.' -ForegroundColor Yellow
-        }
-    }
-
-    $skillsDir = Join-Path $MagicClawHome 'skills'
-    $memoriesDir = Join-Path $MagicClawHome 'memories'
-    $runDir = Join-Path $MagicClawHome 'run'
-    foreach ($path in @($skillsDir, $memoriesDir, $runDir)) {
-        New-Item -ItemType Directory -Force -Path $path | Out-Null
-    }
-
-    $envFile = Join-Path $MagicClawHome '.env'
-    if (-not (Test-Path -LiteralPath $envFile)) {
-        $example = Join-Path $Dir 'share\env.example'
-        if (Test-Path -LiteralPath $example) {
-            Copy-Item -LiteralPath $example -Destination $envFile
-        }
-        else {
-            @'
-# MagicClaw configuration
-OPENAI_API_KEY=
-
-# API server port (default 4000)
-# PORT=4000
-
-# Web UI port is fixed at 3000 by the launcher
-
-# CORS origin for API (default http://localhost:3000)
-# WEB_ORIGIN=http://localhost:3000
-
-# Mem0 Platform (optional)
-# MEM0_API_KEY=m0-...
-'@ | Set-Content -LiteralPath $envFile -Encoding UTF8
-        }
-        Write-Host "Created $envFile"
-    }
-
-    $content = Get-Content -LiteralPath $envFile -Raw
-    if ($content -notmatch '(?m)^OPENAI_API_KEY=.+') {
-        if (-not $NonInteractive) {
-            $key = Read-Host 'Enter OPENAI_API_KEY (required for chat)'
-            if ($key) {
-                if ($content -match '(?m)^OPENAI_API_KEY=') {
-                    $content = [regex]::Replace($content, '(?m)^OPENAI_API_KEY=.*', "OPENAI_API_KEY=$key")
-                }
-                else {
-                    $content = $content.TrimEnd() + "`nOPENAI_API_KEY=$key`n"
-                }
-                Set-Content -LiteralPath $envFile -Value $content -Encoding UTF8 -NoNewline
-                Write-Host 'OPENAI_API_KEY saved' -ForegroundColor Green
-            }
-            else {
-                Write-Host "OPENAI_API_KEY not set — edit $envFile before chatting" -ForegroundColor Yellow
-            }
-        }
-        else {
-            Write-Host "OPENAI_API_KEY not set — edit $envFile before chatting" -ForegroundColor Yellow
-        }
-    }
-
-    Write-Host ''
-    Write-Host 'Setup complete. Run: magicclaw start'
+    $env:MAGICCLAW_HOME = $MagicClawHome
+    $env:MAGICCLAW_INSTALL_DIR = $Dir
+    Invoke-MagicClawLauncher -AppInstallDir $Dir setup
 }
 
 if ($Help) {
@@ -404,12 +345,6 @@ try {
     Install-Shim -AppInstallDir $Dir
     Ensure-UserPath
     Invoke-MagicClawSetup
-
-    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
-        Write-Host ''
-        Write-Host 'Note: Git Bash is not installed. Install Git for Windows to run magicclaw from PowerShell/CMD:' -ForegroundColor Yellow
-        Write-Host '  https://git-scm.com/download/win'
-    }
 
     Write-Host ''
     Write-Host 'MagicClaw installed successfully!' -ForegroundColor Green
