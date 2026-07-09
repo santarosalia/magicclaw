@@ -37,7 +37,13 @@ cp scripts/bin/magicclaw "$STAGING/bin/magicclaw"
 chmod +x "$STAGING/bin/magicclaw" 2>/dev/null || true
 cp scripts/lib/detect-platform.sh "$STAGING/lib/detect-platform.sh"
 cp scripts/lib/node-fts5-check.sh "$STAGING/lib/node-fts5-check.sh"
+cp scripts/lib/normalize-path.sh "$STAGING/lib/normalize-path.sh"
 chmod +x "$STAGING/lib/"*.sh 2>/dev/null || true
+if [[ "$PLATFORM" == windows-* ]]; then
+  for script in "$STAGING/bin/magicclaw" "$STAGING/lib/"*.sh; do
+    sed -i 's/\r$//' "$script" 2>/dev/null || sed -i '' 's/\r$//' "$script"
+  done
+fi
 if [[ "$PLATFORM" == windows-* ]] && [[ -f scripts/bin/magicclaw.cmd ]]; then
   cp scripts/bin/magicclaw.cmd "$STAGING/bin/magicclaw.cmd"
 fi

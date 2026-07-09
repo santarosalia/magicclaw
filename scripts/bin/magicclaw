@@ -6,6 +6,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 MAGICCLAW_HOME="${MAGICCLAW_HOME:-$HOME/.magicclaw}"
+
+# shellcheck source=../lib/normalize-path.sh
+source "$SCRIPT_DIR/../lib/normalize-path.sh"
+
+MAGICCLAW_HOME="$(magicclaw_normalize_path "$MAGICCLAW_HOME")"
+if [[ -n "${MAGICCLAW_INSTALL_DIR:-}" ]]; then
+  MAGICCLAW_INSTALL_DIR="$(magicclaw_normalize_path "$MAGICCLAW_INSTALL_DIR")"
+  APP_ROOT="$MAGICCLAW_INSTALL_DIR"
+fi
+
 RUN_DIR="$MAGICCLAW_HOME/run"
 API_PID_FILE="$RUN_DIR/api.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
