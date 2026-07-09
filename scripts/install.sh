@@ -198,9 +198,9 @@ download_and_install() {
   echo -e "${BLUE}Downloading ${asset}...${NC}"
   local tmpdir
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
 
   if ! curl -fsSL "$url" -o "$tmpdir/bundle.tar.gz"; then
+    rm -rf "$tmpdir"
     echo -e "${RED}Download failed: $url${NC}" >&2
     echo "Check that release $version exists for platform $platform" >&2
     exit 1
@@ -210,6 +210,7 @@ download_and_install() {
   mkdir -p "$INSTALL_DIR"
   rm -rf "${INSTALL_DIR:?}/"*
   tar -xzf "$tmpdir/bundle.tar.gz" -C "$INSTALL_DIR"
+  rm -rf "$tmpdir"
   chmod +x "$INSTALL_DIR/bin/magicclaw" 2>/dev/null || true
   if [[ -f "$INSTALL_DIR/bin/magicclaw.cmd" ]]; then
     chmod +x "$INSTALL_DIR/bin/magicclaw.cmd" 2>/dev/null || true
