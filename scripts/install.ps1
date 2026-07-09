@@ -237,13 +237,14 @@ function Install-Shim {
     }
 
     $bashLauncher = ($resolvedAppRoot -replace '\\', '/') + '/bin/magicclaw'
+    $bashMagicClawHome = $MagicClawHome -replace '\\', '/'
 
     @"
 @echo off
 setlocal
-if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=$MagicClawHome"
-set "MAGICCLAW_INSTALL_DIR=$resolvedAppRoot"
-set "APP_ROOT=$resolvedAppRoot"
+if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=$bashMagicClawHome"
+set "MAGICCLAW_INSTALL_DIR=$($resolvedAppRoot -replace '\\', '/')"
+set "APP_ROOT=$($resolvedAppRoot -replace '\\', '/')"
 where bash >nul 2>&1
 if %ERRORLEVEL%==0 (
   bash "$bashLauncher" %*
@@ -301,7 +302,7 @@ function Invoke-MagicClawSetup {
         return
     }
 
-    $env:MAGICCLAW_HOME = $MagicClawHome
+    $env:MAGICCLAW_HOME = ($MagicClawHome -replace '\\', '/')
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     $launcher = Join-Path $Dir 'bin\magicclaw'
     $bashLauncher = ($launcher -replace '\\', '/')
