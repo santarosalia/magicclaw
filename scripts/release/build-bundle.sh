@@ -11,16 +11,24 @@ VERSION="${VERSION#v}"
 PLATFORM="${PLATFORM:-}"
 
 detect_platform() {
-  local os arch
-  case "$(uname -s)" in
+  local os arch uname_s
+  uname_s="$(uname -s)"
+  case "$uname_s" in
     Linux) os="linux" ;;
     Darwin) os="darwin" ;;
-    *) echo "Unsupported build OS: $(uname -s)" >&2; exit 1 ;;
+    MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+    *)
+      echo "Unsupported build OS: $uname_s" >&2
+      exit 1
+      ;;
   esac
   case "$(uname -m)" in
     x86_64|amd64) arch="x64" ;;
     arm64|aarch64) arch="arm64" ;;
-    *) echo "Unsupported build arch: $(uname -m)" >&2; exit 1 ;;
+    *)
+      echo "Unsupported build arch: $(uname -m)" >&2
+      exit 1
+      ;;
   esac
   echo "${os}-${arch}"
 }
@@ -47,7 +55,10 @@ rm -rf "$STAGING"
 mkdir -p "$STAGING/bin" "$STAGING/api" "$STAGING/web" "$STAGING/share"
 
 cp scripts/bin/magicclaw "$STAGING/bin/magicclaw"
-chmod +x "$STAGING/bin/magicclaw"
+chmod +x "$STAGING/bin/magicclaw" 2>/dev/null || true
+if [[ "$PLATFORM" == windows-* ]] && [[ -f scripts/bin/magicclaw.cmd ]]; then
+  cp scripts/bin/magicclaw.cmd "$STAGING/bin/magicclaw.cmd"
+fi
 echo "$VERSION" >"$STAGING/VERSION"
 
 if [[ -f .env.example ]]; then
@@ -103,6 +114,13 @@ if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}' >"$ARCHIVE_PATH.sha256"
 elif command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$ARCHIVE_PATH" | awk '{print $1}' >"$ARCHIVE_PATH.sha256"
+else
+  node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex');
+    fs.writeFileSync(process.argv[1] + '.sha256', hash + '\n');
+  " "$ARCHIVE_PATH"
 fi
 
 rm -rf "$STAGING"

@@ -5,8 +5,8 @@ set -euo pipefail
 STAGING="${1:?staging directory required}"
 NODE_BIN="${2:-$(command -v node)}"
 
-if [[ ! -x "$NODE_BIN" ]]; then
-  echo "Error: Node binary not executable: $NODE_BIN" >&2
+if ! "$NODE_BIN" -v >/dev/null 2>&1; then
+  echo "Error: Node binary not runnable: $NODE_BIN" >&2
   exit 1
 fi
 

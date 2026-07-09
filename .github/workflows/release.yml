@@ -23,6 +23,9 @@ jobs:
           - os: darwin
             arch: x64
             runner: macos-13
+          - os: windows
+            arch: x64
+            runner: windows-latest
 
     runs-on: ${{ matrix.runner }}
 
@@ -47,6 +50,7 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
           PLATFORM: ${{ matrix.os }}-${{ matrix.arch }}
+        shell: bash
         run: bash scripts/release/build-bundle.sh
 
       - name: Upload release artifact

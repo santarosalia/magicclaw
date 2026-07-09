@@ -63,7 +63,8 @@ curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
 | 단계 | URL | 비고 |
 |------|-----|------|
 | 개발/MVP | `raw.githubusercontent.com/.../main/scripts/install.sh` | 브랜치 기준, 즉시 사용 |
-| 권장 | `github.com/.../releases/latest/download/install.sh` | 릴리스와 동기화 |
+| 권장 | `github.com/.../releases/latest/download/install.sh` | 릴리스와 동기화 (Linux/macOS) |
+| Windows | `magicclaw-*-windows-x64.tar.gz` + Git Bash | `install.ps1`은 후속 예정 |
 | 커스텀 도메인 | `https://magicclaw.example/install.sh` | Vercel 등 정적 호스팅 (Hermes 패턴) |
 
 커스텀 도메인은 Vercel 프로젝트에 `public/install.sh`를 두고 `vercel.json`으로 `/install.sh`를 서빙하면 됩니다.
