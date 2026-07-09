@@ -10,31 +10,10 @@ VERSION="${VERSION:-$(node -p "require('./package.json').version")}"
 VERSION="${VERSION#v}"
 PLATFORM="${PLATFORM:-}"
 
-detect_platform() {
-  local os arch uname_s
-  uname_s="$(uname -s)"
-  case "$uname_s" in
-    Linux) os="linux" ;;
-    Darwin) os="darwin" ;;
-    MINGW*|MSYS*|CYGWIN*) os="windows" ;;
-    *)
-      echo "Unsupported build OS: $uname_s" >&2
-      exit 1
-      ;;
-  esac
-  case "$(uname -m)" in
-    x86_64|amd64) arch="x64" ;;
-    arm64|aarch64) arch="arm64" ;;
-    *)
-      echo "Unsupported build arch: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
-  echo "${os}-${arch}"
-}
-
 if [[ -z "$PLATFORM" ]]; then
-  PLATFORM="$(detect_platform)"
+  # shellcheck source=../lib/detect-platform.sh
+  source "$ROOT/scripts/lib/detect-platform.sh"
+  PLATFORM="$(magicclaw_detect_platform)"
 fi
 
 OUT_DIR="${OUT_DIR:-$ROOT/dist/release}"

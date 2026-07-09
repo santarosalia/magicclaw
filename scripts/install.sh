@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/detect-platform.sh
+source "$SCRIPT_DIR/lib/detect-platform.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -96,24 +100,7 @@ print_banner() {
 }
 
 detect_platform() {
-  local os arch
-  case "$(uname -s)" in
-    Linux) os="linux" ;;
-    Darwin) os="darwin" ;;
-    *)
-      echo -e "${RED}Unsupported OS: $(uname -s)${NC}" >&2
-      exit 1
-      ;;
-  esac
-  case "$(uname -m)" in
-    x86_64|amd64) arch="x64" ;;
-    arm64|aarch64) arch="arm64" ;;
-    *)
-      echo -e "${RED}Unsupported architecture: $(uname -m)${NC}" >&2
-      exit 1
-      ;;
-  esac
-  echo "${os}-${arch}"
+  magicclaw_detect_platform
 }
 
 resolve_version() {
@@ -174,7 +161,10 @@ download_and_install() {
   mkdir -p "$INSTALL_DIR"
   rm -rf "${INSTALL_DIR:?}/"*
   tar -xzf "$tmpdir/bundle.tar.gz" -C "$INSTALL_DIR"
-  chmod +x "$INSTALL_DIR/bin/magicclaw"
+  chmod +x "$INSTALL_DIR/bin/magicclaw" 2>/dev/null || true
+  if [[ -f "$INSTALL_DIR/bin/magicclaw.cmd" ]]; then
+    chmod +x "$INSTALL_DIR/bin/magicclaw.cmd" 2>/dev/null || true
+  fi
 }
 
 install_shim() {
