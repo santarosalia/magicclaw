@@ -7,6 +7,9 @@
 # Usage:
 #   curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 #
+# Windows PowerShell:
+#   irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 | iex
+#
 # Or with options:
 #   curl -fsSL ... | bash -s -- --version v0.1.0 --skip-setup
 # ============================================================================
