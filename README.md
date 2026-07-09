@@ -12,25 +12,94 @@
   - MCP 서버 관리, 채팅, LLM/메모리/스킬/메신저 설정
 - **apps/electron** – Electron 데스크톱 (선택)
 
-## 빠른 설치 (curl)
+## 설치
 
-릴리스가 GitHub에 게시된 후:
+### 요구 사항
+
+- **Node.js 22+** (릴리스 번들은 Node를 포함하지 않음 — [nodejs.org](https://nodejs.org/)에서 설치)
+- **Linux / macOS**: `curl`, `tar`, `bash`
+- **Windows**: [Git for Windows](https://git-scm.com/download/win) (Git Bash) 또는 WSL
+
+지원 플랫폼 (GitHub Releases):
+
+| 플랫폼 | 아티팩트 |
+|--------|----------|
+| Linux x64 | `magicclaw-{version}-linux-x64.tar.gz` |
+| macOS (Apple Silicon) | `magicclaw-{version}-darwin-arm64.tar.gz` |
+| Windows x64 | `magicclaw-{version}-windows-x64.tar.gz` |
+
+---
+
+### Linux / macOS
 
 ```bash
-# 최신 릴리스에서 설치
 curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
-
-# 또는 main 브랜치 install.sh (개발 중)
-curl -fsSL https://raw.githubusercontent.com/santarosalia/magicclaw/main/scripts/install.sh | bash
 ```
 
-설치 후:
+설치 스크립트가 플랫폼에 맞는 tarball을 받아 `~/.magicclaw/app`에 풀고, `~/.local/bin/magicclaw` 명령을 등록합니다.
+
+**처음 실행:**
 
 ```bash
-magicclaw setup    # ~/.magicclaw/.env 생성, OPENAI_API_KEY 설정
-magicclaw start    # API(:4000) + Web(:3000) 기동
-open http://localhost:3000
+# 셸을 다시 열거나 PATH 적용
+export PATH="$HOME/.local/bin:$PATH"
+
+magicclaw setup    # ~/.magicclaw/.env 생성, OPENAI_API_KEY 입력
+magicclaw start    # API :4000 + Web :3000
+open http://localhost:3000   # macOS
+# xdg-open http://localhost:3000   # Linux
 ```
+
+**옵션:**
+
+```bash
+curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
+```
+
+| 옵션 | 설명 |
+|------|------|
+| `--version TAG` | 특정 릴리스 태그 설치 (예: `v0.1.0`) |
+| `--magicclaw-home DIR` | 데이터 디렉터리 (기본 `~/.magicclaw`) |
+| `--skip-setup` | `.env` 초기화 단계 생략 |
+| `--non-interactive` | 프롬프트 없이 진행 |
+
+---
+
+### Windows
+
+PowerShell 원라이너(`install.ps1`)는 아직 없습니다. Git Bash에서 설치합니다.
+
+**1. Node.js 22+ 설치**
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+**2. Git Bash에서 설치**
+
+```bash
+curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
+```
+
+**3. 실행 (Git Bash)**
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+magicclaw setup
+magicclaw start
+```
+
+브라우저에서 http://localhost:3000 을 엽니다.
+
+> `magicclaw.cmd`는 Git Bash가 PATH에 있을 때 bash 런처로 위임합니다. CMD만 쓰는 경우 Git Bash 또는 WSL을 사용하세요.
+
+**수동 설치 (tarball 직접 풀기):**
+
+1. [Releases](https://github.com/santarosalia/magicclaw/releases)에서 `magicclaw-*-windows-x64.tar.gz` 다운로드
+2. `%USERPROFILE%\.magicclaw\app` 에 압축 해제 (`tar -xzf ... -C ...`)
+3. Git Bash에서 `bash ~/.magicclaw/app/bin/magicclaw setup && bash ~/.magicclaw/app/bin/magicclaw start`
+
+---
 
 ### magicclaw CLI
 
@@ -43,37 +112,34 @@ open http://localhost:3000
 | `magicclaw update` | 최신 릴리스로 업데이트 |
 | `magicclaw logs [api\|web]` | 로그 tail |
 
-데이터는 `~/.magicclaw/`에 저장됩니다 (`MAGICCLAW_HOME`으로 변경 가능).
+**데이터 위치**
 
-릴리스 번들은 **시스템 Node 22+**를 사용합니다. 일부 Node 빌드는 `node:sqlite` FTS5를 포함하지 않으며, 이 경우 세션 검색은 자동으로 LIKE 폴백으로 동작합니다.
+| OS | 기본 경로 |
+|----|-----------|
+| Linux / macOS | `~/.magicclaw/` |
+| Windows | `%USERPROFILE%\.magicclaw\` |
 
-### install.sh 옵션
+환경 변수 `MAGICCLAW_HOME`으로 변경할 수 있습니다. 설정 파일은 `MAGICCLAW_HOME/.env` (필수: `OPENAI_API_KEY`).
+
+**참고:** 일부 Node 빌드는 SQLite FTS5를 포함하지 않습니다. 이 경우 세션 검색은 자동으로 LIKE 폴백으로 동작하며 API는 정상 기동합니다.
+
+---
+
+### 업데이트
 
 ```bash
-curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
+magicclaw update
+# 또는 install.sh 재실행
+curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 ```
 
-- `--version TAG` — 특정 릴리스 태그 설치
-- `--magicclaw-home DIR` — 데이터 디렉터리 (기본 `~/.magicclaw`)
-- `--skip-setup` — setup 단계 생략
-- `--non-interactive` — 프롬프트 없이 진행
+---
 
-### 호스팅 URL 단계
-
-| 단계 | URL | 비고 |
-|------|-----|------|
-| 개발/MVP | `raw.githubusercontent.com/.../main/scripts/install.sh` | 브랜치 기준, 즉시 사용 |
-| 권장 | `github.com/.../releases/latest/download/install.sh` | 릴리스와 동기화 (Linux/macOS) |
-| Windows | `magicclaw-*-windows-x64.tar.gz` + Git Bash | `install.ps1`은 후속 예정 |
-| 커스텀 도메인 | `https://magicclaw.example/install.sh` | Vercel 등 정적 호스팅 (Hermes 패턴) |
-
-커스텀 도메인은 Vercel 프로젝트에 `public/install.sh`를 두고 `vercel.json`으로 `/install.sh`를 서빙하면 됩니다.
-
-## 개발자 설치
+## 개발자 설치 (소스에서)
 
 ### 요구 사항
 
-- Node.js 22+ (시스템에 설치 — 릴리스 번들은 Node를 포함하지 않음)
+- Node.js 22+
 - pnpm 10
 
 ```bash

@@ -25,6 +25,8 @@ NC='\033[0m'
 
 # shellcheck source=../lib/node-fts5-check.sh
 source "$SCRIPT_DIR/../lib/node-fts5-check.sh"
+# shellcheck source=../lib/detect-platform.sh
+source "$SCRIPT_DIR/../lib/detect-platform.sh"
 
 resolve_node() {
   local candidates=()
@@ -269,18 +271,7 @@ EOF
 }
 
 detect_platform() {
-  local os arch
-  case "$(uname -s)" in
-    Linux) os="linux" ;;
-    Darwin) os="darwin" ;;
-    *) echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
-  esac
-  case "$(uname -m)" in
-    x86_64|amd64) arch="x64" ;;
-    arm64|aarch64) arch="arm64" ;;
-    *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
-  esac
-  echo "${os}-${arch}"
+  magicclaw_detect_platform
 }
 
 cmd_update() {

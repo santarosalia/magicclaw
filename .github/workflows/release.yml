@@ -20,9 +20,6 @@ jobs:
           - os: darwin
             arch: arm64
             runner: macos-latest
-          - os: darwin
-            arch: x64
-            runner: macos-13
           - os: windows
             arch: x64
             runner: windows-latest
@@ -44,7 +41,9 @@ jobs:
           version: 10.0.0
 
       - name: Install dependencies
-        run: CI=true pnpm install --frozen-lockfile
+        env:
+          CI: true
+        run: pnpm install --frozen-lockfile
 
       - name: Build release bundle
         env:
