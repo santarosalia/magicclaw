@@ -664,11 +664,23 @@ function Get-LatestReleaseTag {
         }
     }
 
+    if ($location -is [array]) {
+        $location = $location[0]
+    }
+
     if ($location -and $location -match '/releases/tag/([^/?#]+)') {
         return [Uri]::UnescapeDataString($Matches[1])
     }
 
-    throw 'Could not resolve latest release. Specify a version tag.'
+    if ($location -and $location -match '/releases/latest/?$') {
+        throw 'Could not resolve latest release because GitHub did not redirect to a tag. Specify a version tag.'
+    }
+
+    if (-not $location) {
+        throw 'Could not resolve latest release. Specify a version tag.'
+    }
+
+    throw "Could not parse latest release redirect: $location"
 }
 
 function Invoke-Update {
@@ -747,7 +759,7 @@ try {
         'stop' { Invoke-Stop }
         'status' { Invoke-Status }
         'setup' { Invoke-Setup }
-        'update' { Invoke-Update -Version $Rest[0] }
+        'update' { Invoke-Update -Version $(if ($Rest -and $Rest.Count -gt 0) { $Rest[0] }) }
         'logs' { Invoke-Logs -Target $(if ($Rest.Count -gt 0) { $Rest[0] } else { 'all' }) }
         'help' { Show-Help }
         '--help' { Show-Help }
