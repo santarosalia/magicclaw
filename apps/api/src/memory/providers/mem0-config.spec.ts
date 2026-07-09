@@ -62,4 +62,21 @@ describe("mem0-config", () => {
     expect(built.vectorStore.config.path).toContain("mem0_qdrant");
     expect(built.historyDbPath).toContain("mem0-history.db");
   });
+
+  it("expands tilde-based mem0 paths before building config", () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const oss = defaultMem0OssConfig();
+    oss.historyDbPath = "~/.magicclaw/mem0-history.db";
+    oss.vectorStore = {
+      provider: "qdrant",
+      config: {
+        collectionName: "magicclaw_memories",
+        path: "~/.magicclaw/mem0_qdrant",
+      },
+    };
+
+    const built = buildMem0OssMemoryConfig(oss);
+    expect(built.historyDbPath).not.toContain("~");
+    expect(String(built.vectorStore.config.path)).not.toContain("~");
+  });
 });

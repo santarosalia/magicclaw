@@ -85,8 +85,11 @@ export class AgentGateway {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       this.logger.error(`chat handling failed: ${message}`);
+      if (error instanceof Error && error.stack) {
+        this.logger.debug(error.stack);
+      }
       client.emit("agent_error", {
-        message: "에이전트 처리 중 오류가 발생했습니다.",
+        message: message || "에이전트 처리 중 오류가 발생했습니다.",
       });
     }
   }

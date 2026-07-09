@@ -146,6 +146,21 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    socket.on("agent_error", (payload: { message?: string }) => {
+      const text =
+        payload?.message?.trim() || "에이전트 처리 중 오류가 발생했습니다.";
+      streamingContentRef.current = "";
+      setStreamingContent("");
+      setLoading(false);
+      setMessages((msgs) => [...msgs, { role: "assistant", content: `오류: ${text}` }]);
+    });
+
+    socket.on("connect_error", () => {
+      setConnected(false);
+      setConnecting(false);
+      setLoading(false);
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;

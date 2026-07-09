@@ -1,6 +1,8 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { getMagicClawHome } from "../../common/magicclaw-home.js";
+import { join, resolve } from "node:path";
+import {
+  expandUserPath,
+  getMagicClawHome,
+} from "../../common/magicclaw-home.js";
 
 export type Mem0Mode = "platform" | "oss";
 
@@ -101,13 +103,6 @@ function resolveBlockApiKey(
   return process.env[envName]?.trim() ?? "";
 }
 
-function expandHomePath(value: string): string {
-  if (value.startsWith("~/")) {
-    return join(homedir(), value.slice(2));
-  }
-  return value;
-}
-
 function embeddingDimsForModel(model: unknown): number | undefined {
   if (typeof model !== "string") return undefined;
   return KNOWN_EMBEDDING_DIMS[model];
@@ -202,16 +197,18 @@ export function buildMem0OssMemoryConfig(
 
   if (stored.vectorStore.provider === "qdrant") {
     if (typeof vectorConfig.path === "string") {
-      vectorConfig.path = expandHomePath(vectorConfig.path);
+      vectorConfig.path = expandUserPath(vectorConfig.path);
     }
     if (!vectorConfig.path && !vectorConfig.url && !vectorConfig.host) {
       vectorConfig.path = join(getMagicClawHome(), "mem0_qdrant");
     }
   }
 
-  const historyDbPath =
-    stored.historyDbPath?.trim() ||
-    join(getMagicClawHome(), "mem0-history.db");
+  const historyDbPath = resolve(
+    expandUserPath(
+      stored.historyDbPath?.trim() || join(getMagicClawHome(), "mem0-history.db")
+    )
+  );
 
   return {
     version: "v1.1",
