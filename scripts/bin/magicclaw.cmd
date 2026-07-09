@@ -3,13 +3,14 @@ setlocal
 REM MagicClaw Windows launcher (Git Bash or install.ps1 recommended for full CLI).
 REM Usage: magicclaw.cmd start|stop|status|setup
 
-set "APP_ROOT=%~dp0.."
+for %%I in ("%~dp0..") do set "APP_ROOT=%%~fI"
 set "MAGICCLAW_HOME=%MAGICCLAW_HOME%"
 if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=%USERPROFILE%\.magicclaw"
 
 where bash >nul 2>&1
 if %ERRORLEVEL%==0 (
-  bash "%APP_ROOT%\bin\magicclaw" %*
+  set "MC_LAUNCHER=%APP_ROOT:\=/%/bin/magicclaw"
+  bash "%MC_LAUNCHER%" %*
   exit /b %ERRORLEVEL%
 )
 
