@@ -40,6 +40,7 @@ export type MessageHit = {
 @Injectable()
 export class SessionDbService implements OnModuleInit, OnModuleDestroy {
   private db: DatabaseSync | null = null;
+  private ftsEnabled = false;
 
   onModuleInit(): void {
     const dbPath = join(getMagicClawHome(), "sessions.db");
@@ -66,8 +67,28 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
     `);
     this.ensureSearchTextColumn();
-    this.ensureFtsTable();
+    this.ftsEnabled = this.probeFts5();
+    if (this.ftsEnabled) {
+      this.ensureFtsTable();
+    }
     this.backfillSearchText();
+  }
+
+  isFtsEnabled(): boolean {
+    return this.ftsEnabled;
+  }
+
+  private probeFts5(): boolean {
+    try {
+      const db = this.getDb();
+      db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS _magicclaw_fts_probe USING fts5(x)`
+      );
+      db.exec(`DROP TABLE IF EXISTS _magicclaw_fts_probe`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private ensureSearchTextColumn(): void {
@@ -135,9 +156,11 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       for (const row of rows) {
         const searchText = this.deriveSearchText(row.content, row.role);
         update.run(searchText, row.id);
-        ftsDelete.run(row.id);
-        if (searchText.trim()) {
-          ftsInsert.run(searchText, row.session_id, row.id);
+        if (this.ftsEnabled) {
+          ftsDelete.run(row.id);
+          if (searchText.trim()) {
+            ftsInsert.run(searchText, row.session_id, row.id);
+          }
         }
       }
     });
@@ -201,7 +224,9 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
   deleteSession(sessionId: string): void {
     const db = this.getDb();
     db.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId);
-    db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+    if (this.ftsEnabled) {
+      db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+    }
     db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
   }
 
@@ -218,14 +243,18 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     this.runInTransaction(() => {
       const db = this.getDb();
       db.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId);
-      db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+      if (this.ftsEnabled) {
+        db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+      }
 
       const insert = db.prepare(
         `INSERT INTO messages (session_id, role, content, search_text, created_at) VALUES (?, ?, ?, ?, ?)`
       );
-      const fts = db.prepare(
-        `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
-      );
+      const fts = this.ftsEnabled
+        ? db.prepare(
+            `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
+          )
+        : null;
       const now = Date.now();
 
       for (const message of messages) {
@@ -239,7 +268,7 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
           now
         );
         const messageId = Number(result.lastInsertRowid);
-        if (searchText.trim()) {
+        if (this.ftsEnabled && fts && searchText.trim()) {
           fts.run(searchText, sessionId, messageId);
         }
       }
@@ -259,9 +288,11 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       const insert = db.prepare(
         `INSERT INTO messages (session_id, role, content, search_text, created_at) VALUES (?, ?, ?, ?, ?)`
       );
-      const fts = db.prepare(
-        `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
-      );
+      const fts = this.ftsEnabled
+        ? db.prepare(
+            `INSERT INTO messages_fts (search_text, session_id, message_id) VALUES (?, ?, ?)`
+          )
+        : null;
       const now = Date.now();
 
       for (const message of messages) {
@@ -275,7 +306,7 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
           now
         );
         const messageId = Number(result.lastInsertRowid);
-        if (searchText.trim()) {
+        if (this.ftsEnabled && fts && searchText.trim()) {
           fts.run(searchText, sessionId, messageId);
         }
       }
@@ -288,16 +319,31 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
   }
 
   searchSessions(userId: string, query: string): SessionRecord[] {
-    const rows = this.getDb()
-      .prepare(
-        `SELECT DISTINCT s.id, s.user_id, s.channel, s.title, s.created_at, s.updated_at
+    if (this.ftsEnabled) {
+      const rows = this.getDb()
+        .prepare(
+          `SELECT DISTINCT s.id, s.user_id, s.channel, s.title, s.created_at, s.updated_at
          FROM sessions s
          JOIN messages_fts f ON f.session_id = s.id
          WHERE s.user_id = ? AND messages_fts MATCH ?
          ORDER BY s.updated_at DESC
          LIMIT 20`
+        )
+        .all(userId, query) as SessionRow[];
+      return rows.map((r) => this.toSessionRecord(r));
+    }
+
+    const { sql, params } = this.buildLikeSearchClause(userId, query);
+    const rows = this.getDb()
+      .prepare(
+        `SELECT DISTINCT s.id, s.user_id, s.channel, s.title, s.created_at, s.updated_at
+         FROM sessions s
+         JOIN messages m ON m.session_id = s.id
+         WHERE ${sql}
+         ORDER BY s.updated_at DESC
+         LIMIT 20`
       )
-      .all(userId, query) as SessionRow[];
+      .all(...params) as SessionRow[];
 
     return rows.map((r) => this.toSessionRecord(r));
   }
@@ -307,17 +353,42 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     query: string,
     limit: number
   ): MessageHit[] {
-    const rows = this.getDb()
-      .prepare(
-        `SELECT f.session_id, f.message_id,
+    if (this.ftsEnabled) {
+      const rows = this.getDb()
+        .prepare(
+          `SELECT f.session_id, f.message_id,
                 snippet(messages_fts, 0, '**', '**', '…', 24) AS snippet
          FROM messages_fts f
          JOIN sessions s ON s.id = f.session_id
          WHERE s.user_id = ? AND messages_fts MATCH ?
          ORDER BY s.updated_at DESC
          LIMIT ?`
+        )
+        .all(userId, query, limit) as Array<{
+        session_id: string;
+        message_id: number;
+        snippet: string;
+      }>;
+
+      return rows.map((r) => ({
+        session_id: r.session_id,
+        message_id: r.message_id,
+        snippet: r.snippet,
+      }));
+    }
+
+    const { sql, params } = this.buildLikeSearchClause(userId, query);
+    const rows = this.getDb()
+      .prepare(
+        `SELECT m.session_id, m.id AS message_id,
+                substr(m.search_text, 1, 120) AS snippet
+         FROM messages m
+         JOIN sessions s ON s.id = m.session_id
+         WHERE ${sql}
+         ORDER BY s.updated_at DESC, m.id DESC
+         LIMIT ?`
       )
-      .all(userId, query, limit) as Array<{
+      .all(...params, limit) as Array<{
       session_id: string;
       message_id: number;
       snippet: string;
@@ -326,8 +397,27 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     return rows.map((r) => ({
       session_id: r.session_id,
       message_id: r.message_id,
-      snippet: r.snippet,
+      snippet: r.snippet?.trim() ? r.snippet : "",
     }));
+  }
+
+  private buildLikeSearchClause(
+    userId: string,
+    query: string
+  ): { sql: string; params: Array<string> } {
+    const terms = query
+      .replace(/["()]/g, " ")
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (terms.length === 0) {
+      return { sql: "s.user_id = ?", params: [userId] };
+    }
+
+    const clauses = ["s.user_id = ?", ...terms.map(() => "m.search_text LIKE ?")];
+    const params = [userId, ...terms.map((t) => `%${t}%`)];
+    return { sql: clauses.join(" AND "), params };
   }
 
   listMessageRows(sessionId: string): MessageRow[] {
