@@ -352,15 +352,15 @@ function Start-MagicClawProcess {
     Sync-RuntimeEnvironment -Extra $Environment
 
     try {
-        # Console apps like node.exe must use -NoNewWindow with redirected streams.
-        # -WindowStyle Hidden can make node exit immediately on Windows.
+        # Avoid -NoNewWindow: node attaches to the interactive console and
+        # receives Ctrl+C when the user stops `magicclaw logs`.
+        # Redirected stdout/stderr spawn a detached background process.
         $process = Start-Process -FilePath $NodeBin `
             -ArgumentList $ArgumentList `
             -WorkingDirectory $WorkingDirectory `
             -RedirectStandardOutput $LogFile `
             -RedirectStandardError $errorLog `
-            -PassThru `
-            -NoNewWindow
+            -PassThru
 
         $ready = $false
         if ($ReadyCheck) {
@@ -545,17 +545,17 @@ function Invoke-Logs {
 
     Initialize-Env
     New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+    Write-Info 'Following logs (Ctrl+C to stop — servers keep running)'
 
+    $paths = @()
     switch ($Target) {
         'api' {
             if (-not (Test-Path -LiteralPath $ApiLog)) { New-Item -ItemType File -Path $ApiLog | Out-Null }
             $paths = @($ApiLog, (Get-ErrorLogPath $ApiLog)) | Where-Object { Test-Path -LiteralPath $_ }
-            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
         'web' {
             if (-not (Test-Path -LiteralPath $WebLog)) { New-Item -ItemType File -Path $WebLog | Out-Null }
             $paths = @($WebLog, (Get-ErrorLogPath $WebLog)) | Where-Object { Test-Path -LiteralPath $_ }
-            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
         default {
             if (-not (Test-Path -LiteralPath $ApiLog)) { New-Item -ItemType File -Path $ApiLog | Out-Null }
@@ -566,8 +566,18 @@ function Invoke-Logs {
                 $WebLog,
                 (Get-ErrorLogPath $WebLog)
             ) | Where-Object { Test-Path -LiteralPath $_ }
-            Get-Content -LiteralPath $paths -Tail 20 -Wait
         }
+    }
+
+    try {
+        Get-Content -LiteralPath $paths -Tail 20 -Wait -ErrorAction Stop
+    }
+    catch [System.Management.Automation.PipelineStoppedException] {
+        # Ctrl+C while tailing logs
+    }
+    finally {
+        Write-Host ''
+        Write-Info 'Log follow stopped.'
     }
 }
 
