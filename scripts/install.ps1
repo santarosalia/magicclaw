@@ -192,13 +192,27 @@ function Install-ReleaseBundle {
 }
 
 function Install-Shim {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AppInstallDir
+    )
+
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+
+    $resolvedAppRoot = $AppInstallDir
+    try {
+        $resolvedAppRoot = (Convert-Path -LiteralPath $AppInstallDir)
+    }
+    catch {
+        # Convert-Path can fail on some UNC/edge paths; keep the provided path.
+    }
 
     @"
 @echo off
 setlocal
 if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=$MagicClawHome"
-set "APP_ROOT=%MAGICCLAW_HOME%\app"
+set "MAGICCLAW_INSTALL_DIR=$resolvedAppRoot"
+set "APP_ROOT=$resolvedAppRoot"
 where bash >nul 2>&1
 if %ERRORLEVEL%==0 (
   bash "%APP_ROOT%\bin\magicclaw" %*
@@ -354,7 +368,7 @@ try {
     Write-Host ''
 
     Install-ReleaseBundle -Platform $platform -ReleaseVersion $releaseVersion
-    Install-Shim
+    Install-Shim -AppInstallDir $Dir
     Ensure-UserPath
     Invoke-MagicClawSetup
 
