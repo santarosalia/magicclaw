@@ -1,0 +1,396 @@
+# ============================================================================
+# MagicClaw Installer (Windows PowerShell)
+# ============================================================================
+# Downloads a prebuilt release bundle and installs the magicclaw CLI.
+#
+# Usage:
+#   irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 | iex
+#
+# Or with options (save first, then run):
+#   irm ... -OutFile install.ps1
+#   .\install.ps1 -Version v0.1.0 -SkipSetup
+#
+# Piped install with env vars:
+#   $env:MAGICCLAW_VERSION = 'v0.1.0'; irm ... | iex
+# ============================================================================
+
+#Requires -Version 5.1
+
+[CmdletBinding()]
+param(
+    [Alias('v')]
+    [string]$Version,
+
+    [string]$Dir,
+
+    [string]$MagicClawHome,
+
+    [switch]$SkipSetup,
+
+    [switch]$NonInteractive,
+
+    [switch]$Help
+)
+
+$ErrorActionPreference = 'Stop'
+
+$GitHubRepo = if ($env:MAGICCLAW_GITHUB_REPO) { $env:MAGICCLAW_GITHUB_REPO } else { 'santarosalia/magicclaw' }
+
+if (-not $Version -and $env:MAGICCLAW_VERSION) { $Version = $env:MAGICCLAW_VERSION }
+if (-not $MagicClawHome -and $env:MAGICCLAW_HOME) { $MagicClawHome = $env:MAGICCLAW_HOME }
+if (-not $MagicClawHome) { $MagicClawHome = Join-Path $env:USERPROFILE '.magicclaw' }
+if (-not $Dir) { $Dir = Join-Path $MagicClawHome 'app' }
+
+if ($env:MAGICCLAW_SKIP_SETUP -eq '1') { $SkipSetup = $true }
+if ($env:MAGICCLAW_NON_INTERACTIVE -eq '1') { $NonInteractive = $true }
+
+if (-not $PSBoundParameters.ContainsKey('NonInteractive')) {
+    try {
+        $NonInteractive = [Console]::IsInputRedirected
+    }
+    catch {
+        $NonInteractive = $true
+    }
+}
+
+$BinDir = Join-Path $env:USERPROFILE '.local\bin'
+$ShimPath = Join-Path $BinDir 'magicclaw.cmd'
+
+function Write-Banner {
+    Write-Host ''
+    Write-Host '___  ___               _         _____  _                  ' -ForegroundColor Blue
+    Write-Host '|  \/  |              (_)       /  __ \| |                 ' -ForegroundColor Blue
+    Write-Host '| .  . |  __ _   __ _  _   ___  | /  \/| |  __ _ __      __' -ForegroundColor Blue
+    Write-Host '| |\/| | / _` | / _` || | / __| | |    | | / _` |\ \ /\ / /' -ForegroundColor Blue
+    Write-Host '| |  | || (_| || (_| || || (__  | \__/\| || (_| | \ V  V / ' -ForegroundColor Blue
+    Write-Host '\_|  |_/ \__,_| \__, ||_| \___|  \____/|_| \__,_|  \_/\_/  ' -ForegroundColor Blue
+    Write-Host '                 __/ |                                      ' -ForegroundColor Blue
+    Write-Host '                |___/                                       ' -ForegroundColor Blue
+    Write-Host ''
+    Write-Host 'Magic Claw installer (Windows)'
+    Write-Host ''
+}
+
+function Show-Help {
+    @"
+MagicClaw installer (Windows PowerShell)
+
+Usage:
+  irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 | iex
+
+Options:
+  -Version, -v TAG       Install specific release tag (e.g. v0.1.0)
+  -Dir PATH              Install application files (default: %USERPROFILE%\.magicclaw\app)
+  -MagicClawHome DIR     Data home directory (default: %USERPROFILE%\.magicclaw)
+  -SkipSetup             Skip magicclaw setup (.env initialization)
+  -NonInteractive        Never prompt
+  -Help                  Show this help
+
+Environment (for piped install):
+  MAGICCLAW_VERSION
+  MAGICCLAW_HOME
+  MAGICCLAW_SKIP_SETUP=1
+  MAGICCLAW_NON_INTERACTIVE=1
+  MAGICCLAW_GITHUB_REPO
+"@
+}
+
+function Get-MagicClawPlatform {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if (-not $arch -and $env:PROCESSOR_ARCHITEW6432) {
+        $arch = $env:PROCESSOR_ARCHITEW6432
+    }
+
+    if ($arch -match 'ARM64') {
+        throw 'Windows ARM64 is not supported yet. Use 64-bit Windows or WSL.'
+    }
+    if ($arch -notmatch 'AMD64|x86_64') {
+        throw "Unsupported architecture: $arch"
+    }
+
+    return 'windows-x64'
+}
+
+function Test-Prerequisites {
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        throw 'Node.js 22+ is required. Install from https://nodejs.org/ and re-run.'
+    }
+
+    $major = [int](& node -p "process.versions.node.split('.')[0]")
+    if ($major -lt 22) {
+        $ver = & node -v
+        throw "Node.js 22+ required (found $ver)"
+    }
+
+    if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
+        throw 'tar is required (included in Windows 10 1803+). Update Windows or install Git for Windows.'
+    }
+}
+
+function Get-ReleaseVersion {
+    if ($Version) {
+        return $Version
+    }
+
+    $uri = "https://api.github.com/repos/$GitHubRepo/releases/latest"
+    try {
+        $release = Invoke-RestMethod -Uri $uri -UseBasicParsing
+    }
+    catch {
+        throw "Could not resolve latest release. Specify -Version vX.Y.Z"
+    }
+
+    if (-not $release.tag_name) {
+        throw "Could not resolve latest release. Specify -Version vX.Y.Z"
+    }
+
+    return $release.tag_name
+}
+
+function Install-ReleaseBundle {
+    param(
+        [string]$Platform,
+        [string]$ReleaseVersion
+    )
+
+    $verPlain = $ReleaseVersion -replace '^v', ''
+    $asset = "magicclaw-$verPlain-$Platform.tar.gz"
+    $url = "https://github.com/$GitHubRepo/releases/download/$ReleaseVersion/$asset"
+
+    Write-Host "Downloading $asset..." -ForegroundColor Blue
+
+    $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-install-" + [guid]::NewGuid().ToString('n')))
+    $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
+
+    try {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+        }
+        catch {
+            throw "Download failed: $url`nCheck that release $ReleaseVersion exists for platform $Platform"
+        }
+
+        Write-Host "Installing to $Dir..." -ForegroundColor Blue
+
+        if (Test-Path $Dir) {
+            Get-ChildItem -LiteralPath $Dir -Force | Remove-Item -Recurse -Force
+        }
+        else {
+            New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+        }
+
+        & tar -xzf $archive -C $Dir
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract $asset"
+        }
+    }
+    finally {
+        if ($tmpdir -and (Test-Path $tmpdir.FullName)) {
+            Remove-Item -LiteralPath $tmpdir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Install-Shim {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AppInstallDir
+    )
+
+    New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+
+    $resolvedAppRoot = $AppInstallDir
+    try {
+        $resolvedAppRoot = (Convert-Path -LiteralPath $AppInstallDir)
+    }
+    catch {
+        # Convert-Path can fail on some UNC/edge paths; keep the provided path.
+    }
+
+    @"
+@echo off
+setlocal
+if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=$MagicClawHome"
+set "MAGICCLAW_INSTALL_DIR=$resolvedAppRoot"
+set "APP_ROOT=$resolvedAppRoot"
+where bash >nul 2>&1
+if %ERRORLEVEL%==0 (
+  bash "%APP_ROOT%\bin\magicclaw" %*
+  exit /b %ERRORLEVEL%
+)
+call "%APP_ROOT%\bin\magicclaw.cmd" %*
+"@ | Set-Content -LiteralPath $ShimPath -Encoding ASCII
+
+    Write-Host "Installed CLI shim: $ShimPath" -ForegroundColor Green
+}
+
+function Ensure-UserPath {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $segments = @()
+    if ($userPath) {
+        $segments = $userPath -split ';' | Where-Object { $_ -and $_.Trim() }
+    }
+
+    $normalizedBin = $BinDir.TrimEnd('\')
+    $alreadyPresent = $false
+    foreach ($segment in $segments) {
+        if ($segment.TrimEnd('\').Equals($normalizedBin, [StringComparison]::OrdinalIgnoreCase)) {
+            $alreadyPresent = $true
+            break
+        }
+    }
+
+    if ($alreadyPresent) {
+        return
+    }
+
+    Write-Host "$BinDir is not in PATH" -ForegroundColor Yellow
+
+    if ($NonInteractive) {
+        Write-Host "Add to your user PATH: $BinDir"
+        return
+    }
+
+    $reply = Read-Host "Add $BinDir to user PATH? [Y/n]"
+    if ($reply -and $reply -notmatch '^[Yy]') {
+        return
+    }
+
+    $newPath = if ($segments.Count -gt 0) { ($segments + $BinDir) -join ';' } else { $BinDir }
+    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+    if ($env:Path -notmatch [regex]::Escape($BinDir)) {
+        $env:Path = "$env:Path;$BinDir"
+    }
+
+    Write-Host 'Added to user PATH. Restart your terminal to apply everywhere.' -ForegroundColor Green
+}
+
+function Invoke-MagicClawSetup {
+    if ($SkipSetup) {
+        return
+    }
+
+    $env:MAGICCLAW_HOME = $MagicClawHome
+    $bash = Get-Command bash -ErrorAction SilentlyContinue
+    $launcher = Join-Path $Dir 'bin\magicclaw'
+
+    if ($bash -and (Test-Path -LiteralPath $launcher)) {
+        try {
+            if ($NonInteractive) {
+                & bash $launcher setup 2>$null
+            }
+            else {
+                & bash $launcher setup
+            }
+            return
+        }
+        catch {
+            Write-Host 'magicclaw setup via Git Bash failed; falling back to inline setup.' -ForegroundColor Yellow
+        }
+    }
+
+    $skillsDir = Join-Path $MagicClawHome 'skills'
+    $memoriesDir = Join-Path $MagicClawHome 'memories'
+    $runDir = Join-Path $MagicClawHome 'run'
+    foreach ($path in @($skillsDir, $memoriesDir, $runDir)) {
+        New-Item -ItemType Directory -Force -Path $path | Out-Null
+    }
+
+    $envFile = Join-Path $MagicClawHome '.env'
+    if (-not (Test-Path -LiteralPath $envFile)) {
+        $example = Join-Path $Dir 'share\env.example'
+        if (Test-Path -LiteralPath $example) {
+            Copy-Item -LiteralPath $example -Destination $envFile
+        }
+        else {
+            @'
+# MagicClaw configuration
+OPENAI_API_KEY=
+
+# API server port (default 4000)
+# PORT=4000
+
+# Web UI port is fixed at 3000 by the launcher
+
+# CORS origin for API (default http://localhost:3000)
+# WEB_ORIGIN=http://localhost:3000
+
+# Mem0 Platform (optional)
+# MEM0_API_KEY=m0-...
+'@ | Set-Content -LiteralPath $envFile -Encoding UTF8
+        }
+        Write-Host "Created $envFile"
+    }
+
+    $content = Get-Content -LiteralPath $envFile -Raw
+    if ($content -notmatch '(?m)^OPENAI_API_KEY=.+') {
+        if (-not $NonInteractive) {
+            $key = Read-Host 'Enter OPENAI_API_KEY (required for chat)'
+            if ($key) {
+                if ($content -match '(?m)^OPENAI_API_KEY=') {
+                    $content = [regex]::Replace($content, '(?m)^OPENAI_API_KEY=.*', "OPENAI_API_KEY=$key")
+                }
+                else {
+                    $content = $content.TrimEnd() + "`nOPENAI_API_KEY=$key`n"
+                }
+                Set-Content -LiteralPath $envFile -Value $content -Encoding UTF8 -NoNewline
+                Write-Host 'OPENAI_API_KEY saved' -ForegroundColor Green
+            }
+            else {
+                Write-Host "OPENAI_API_KEY not set — edit $envFile before chatting" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "OPENAI_API_KEY not set — edit $envFile before chatting" -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host ''
+    Write-Host 'Setup complete. Run: magicclaw start'
+}
+
+if ($Help) {
+    Show-Help
+    exit 0
+}
+
+try {
+    Write-Banner
+    Test-Prerequisites
+
+    $platform = Get-MagicClawPlatform
+    $releaseVersion = Get-ReleaseVersion
+
+    Write-Host "Platform:  $platform"
+    Write-Host "Version:   $releaseVersion"
+    Write-Host "Install:   $Dir"
+    Write-Host "Data home: $MagicClawHome"
+    Write-Host ''
+
+    Install-ReleaseBundle -Platform $platform -ReleaseVersion $releaseVersion
+    Install-Shim -AppInstallDir $Dir
+    Ensure-UserPath
+    Invoke-MagicClawSetup
+
+    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+        Write-Host ''
+        Write-Host 'Note: Git Bash is not installed. Install Git for Windows to run magicclaw from PowerShell/CMD:' -ForegroundColor Yellow
+        Write-Host '  https://git-scm.com/download/win'
+    }
+
+    Write-Host ''
+    Write-Host 'MagicClaw installed successfully!' -ForegroundColor Green
+    Write-Host ''
+    Write-Host 'Next steps:'
+    Write-Host '  magicclaw start     # Start API + Web'
+    Write-Host '  Start-Process http://localhost:3000'
+    Write-Host ''
+    Write-Host 'Other commands:'
+    Write-Host '  magicclaw status'
+    Write-Host '  magicclaw setup'
+    Write-Host '  magicclaw update'
+}
+catch {
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    exit 1
+}

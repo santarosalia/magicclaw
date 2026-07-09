@@ -13,6 +13,6 @@ if %ERRORLEVEL%==0 (
   exit /b %ERRORLEVEL%
 )
 
-echo MagicClaw requires Git Bash or PowerShell install.ps1 on Windows.
-echo Download: https://github.com/santarosalia/magicclaw/releases/latest
+echo MagicClaw requires Git Bash. Install Git for Windows or re-run install.ps1.
+echo Install: irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 ^| iex
 exit /b 1

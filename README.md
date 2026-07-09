@@ -18,7 +18,7 @@
 
 - **Node.js 22+** (릴리스 번들은 Node를 포함하지 않음 — [nodejs.org](https://nodejs.org/)에서 설치)
 - **Linux / macOS**: `curl`, `tar`, `bash`
-- **Windows**: [Git for Windows](https://git-scm.com/download/win) (Git Bash) 또는 WSL
+- **Windows**: PowerShell 5.1+ (설치), [Git for Windows](https://git-scm.com/download/win) (CLI 실행 권장) 또는 WSL
 
 지원 플랫폼 (GitHub Releases):
 
@@ -67,31 +67,51 @@ curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
 
 ### Windows
 
-PowerShell 원라이너(`install.ps1`)는 아직 없습니다. Git Bash에서 설치합니다.
-
 **1. Node.js 22+ 설치**
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
 ```
 
-**2. Git Bash에서 설치**
+**2. PowerShell에서 설치 (권장)**
+
+```powershell
+irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 | iex
+```
+
+설치 스크립트가 `magicclaw-*-windows-x64.tar.gz`를 받아 `%USERPROFILE%\.magicclaw\app`에 풀고, `%USERPROFILE%\.local\bin\magicclaw.cmd`를 등록합니다.
+
+**3. 실행**
+
+```powershell
+magicclaw setup   # 최초 1회 (.env 생성)
+magicclaw start
+Start-Process http://localhost:3000
+```
+
+**옵션 (스크립트 저장 후 실행):**
+
+```powershell
+irm ... -OutFile install.ps1
+.\install.ps1 -Version v0.1.0 -SkipSetup
+```
+
+| 옵션                   | 설명                                           |
+| ---------------------- | ---------------------------------------------- |
+| `-Version`, `-v TAG`   | 특정 릴리스 태그 설치 (예: `v0.1.0`)           |
+| `-MagicClawHome DIR`   | 데이터 디렉터리 (기본 `%USERPROFILE%\.magicclaw`) |
+| `-SkipSetup`           | `.env` 초기화 단계 생략                        |
+| `-NonInteractive`      | 프롬프트 없이 진행                             |
+
+파이프 설치 시 환경 변수: `MAGICCLAW_VERSION`, `MAGICCLAW_HOME`, `MAGICCLAW_SKIP_SETUP=1`, `MAGICCLAW_NON_INTERACTIVE=1`
+
+> `magicclaw` CLI는 Git Bash(`bash`)가 PATH에 있으면 bash 런처로 위임합니다. Git for Windows 설치를 권장합니다. Git Bash 없이도 설치·`.env` 초기화는 PowerShell에서 완료됩니다.
+
+**Git Bash에서 설치 (대안):**
 
 ```bash
 curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 ```
-
-**3. 실행 (Git Bash)**
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-magicclaw setup
-magicclaw start
-```
-
-브라우저에서 http://localhost:3000 을 엽니다.
-
-> `magicclaw.cmd`는 Git Bash가 PATH에 있을 때 bash 런처로 위임합니다. CMD만 쓰는 경우 Git Bash 또는 WSL을 사용하세요.
 
 **수동 설치 (tarball 직접 풀기):**
 
@@ -163,7 +183,7 @@ bash scripts/release/build-bundle.sh
 # → dist/release/magicclaw-{version}-{os}-{arch}.tar.gz
 ```
 
-GitHub에 `v*` 태그를 push하면 [`.github/workflows/release.yml`](.github/workflows/release.yml)이 OS별 tarball과 `install.sh`를 Releases에 업로드합니다.
+GitHub에 `v*` 태그를 push하면 [`.github/workflows/release.yml`](.github/workflows/release.yml)이 OS별 tarball과 `install.sh`, `install.ps1`을 Releases에 업로드합니다.
 
 ## MCP 서버 예시
 

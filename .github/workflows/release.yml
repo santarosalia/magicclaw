@@ -86,4 +86,5 @@ jobs:
             dist/release/magicclaw-*.tar.gz
             dist/release/magicclaw-*.sha256
             scripts/install.sh
+            scripts/install.ps1
           generate_release_notes: true
