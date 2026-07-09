@@ -6,10 +6,10 @@ REM Usage: magicclaw.cmd start|stop|status|setup
 for %%I in ("%~dp0..") do set "APP_ROOT=%%~fI"
 set "MAGICCLAW_HOME=%MAGICCLAW_HOME%"
 if "%MAGICCLAW_HOME%"=="" set "MAGICCLAW_HOME=%USERPROFILE%\.magicclaw"
+set "MC_LAUNCHER=%APP_ROOT:\=/%/bin/magicclaw"
 
 where bash >nul 2>&1
 if %ERRORLEVEL%==0 (
-  set "MC_LAUNCHER=%APP_ROOT:\=/%/bin/magicclaw"
   bash "%MC_LAUNCHER%" %*
   exit /b %ERRORLEVEL%
 )
