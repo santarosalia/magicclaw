@@ -34,6 +34,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+catch {
+    # Best effort for older PowerShell; requests below will surface a clear error if TLS negotiation fails.
+}
+
 $GitHubRepo = if ($env:MAGICCLAW_GITHUB_REPO) { $env:MAGICCLAW_GITHUB_REPO } else { 'santarosalia/magicclaw' }
 
 if (-not $Version -and $env:MAGICCLAW_VERSION) { $Version = $env:MAGICCLAW_VERSION }
@@ -132,19 +139,41 @@ function Get-ReleaseVersion {
         return $Version
     }
 
-    $uri = "https://api.github.com/repos/$GitHubRepo/releases/latest"
+    $uri = "https://github.com/$GitHubRepo/releases/latest"
+    $location = $null
+
     try {
-        $release = Invoke-RestMethod -Uri $uri -UseBasicParsing
+        $request = [System.Net.HttpWebRequest]::Create($uri)
+        $request.Method = 'HEAD'
+        $request.AllowAutoRedirect = $false
+        $response = $request.GetResponse()
+        $location = $response.Headers['Location']
+        if (-not $location -and $response.ResponseUri) {
+            $location = $response.ResponseUri.AbsoluteUri
+        }
+        $response.Close()
     }
     catch {
+        $webResponse = $_.Exception.Response
+        if ($webResponse) {
+            $location = $webResponse.Headers['Location']
+            $webResponse.Close()
+        }
+    }
+
+    if ($location -and $location -match '/releases/tag/([^/?#]+)') {
+        return [Uri]::UnescapeDataString($Matches[1])
+    }
+
+    if ($location -and $location -match '/releases/latest/?$') {
+        throw "Could not resolve latest release because GitHub did not redirect to a tag. Specify -Version vX.Y.Z"
+    }
+
+    if (-not $location) {
         throw "Could not resolve latest release. Specify -Version vX.Y.Z"
     }
 
-    if (-not $release.tag_name) {
-        throw "Could not resolve latest release. Specify -Version vX.Y.Z"
-    }
-
-    return $release.tag_name
+    throw "Could not parse latest release redirect: $location"
 }
 
 function Install-ReleaseBundle {
