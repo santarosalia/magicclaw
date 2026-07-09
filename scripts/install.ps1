@@ -236,6 +236,8 @@ function Install-Shim {
         # Convert-Path can fail on some UNC/edge paths; keep the provided path.
     }
 
+    $bashLauncher = ($resolvedAppRoot -replace '\\', '/') + '/bin/magicclaw'
+
     @"
 @echo off
 setlocal
@@ -244,7 +246,7 @@ set "MAGICCLAW_INSTALL_DIR=$resolvedAppRoot"
 set "APP_ROOT=$resolvedAppRoot"
 where bash >nul 2>&1
 if %ERRORLEVEL%==0 (
-  bash "%APP_ROOT%\bin\magicclaw" %*
+  bash "$bashLauncher" %*
   exit /b %ERRORLEVEL%
 )
 call "%APP_ROOT%\bin\magicclaw.cmd" %*
@@ -302,14 +304,15 @@ function Invoke-MagicClawSetup {
     $env:MAGICCLAW_HOME = $MagicClawHome
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     $launcher = Join-Path $Dir 'bin\magicclaw'
+    $bashLauncher = ($launcher -replace '\\', '/')
 
     if ($bash -and (Test-Path -LiteralPath $launcher)) {
         try {
             if ($NonInteractive) {
-                & bash $launcher setup 2>$null
+                & bash $bashLauncher setup 2>$null
             }
             else {
-                & bash $launcher setup
+                & bash $bashLauncher setup
             }
             return
         }
