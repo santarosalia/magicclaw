@@ -214,6 +214,8 @@ cmd_status() {
 cmd_logs() {
   load_env
   local target="${1:-all}"
+  echo "Following logs (Ctrl+C to stop — servers keep running)"
+  trap 'echo ""; echo "Log follow stopped."; exit 0' INT
   case "$target" in
     api)
       touch "$API_LOG"
