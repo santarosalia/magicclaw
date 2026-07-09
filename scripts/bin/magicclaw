@@ -23,16 +23,33 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+# shellcheck source=../lib/node-fts5-check.sh
+source "$SCRIPT_DIR/../lib/node-fts5-check.sh"
+
 resolve_node() {
-  if [[ -x "$APP_ROOT/node/bin/node" ]]; then
-    echo "$APP_ROOT/node/bin/node"
-    return
-  fi
+  local candidates=()
   if command -v node >/dev/null 2>&1; then
-    command -v node
+    candidates+=("$(command -v node)")
+  fi
+  if [[ -x "$APP_ROOT/node/bin/node" ]]; then
+    candidates+=("$APP_ROOT/node/bin/node")
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if node_supports_fts5 "$candidate"; then
+      echo "$candidate"
+      return
+    fi
+  done
+
+  if [[ ${#candidates[@]} -gt 0 ]]; then
+    echo -e "${YELLOW}Warning: no Node build with SQLite FTS5 found; session search may use LIKE fallback${NC}" >&2
+    echo "${candidates[0]}"
     return
   fi
-  echo "Error: Node.js not found. Re-run the installer or install Node 22+." >&2
+
+  echo "Error: Node.js 22+ not found. Install Node or re-run the installer." >&2
   exit 1
 }
 

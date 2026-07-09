@@ -85,16 +85,11 @@ mkdir -p "$STAGING/web/apps/web/.next"
 cp -R "$WEB_STATIC" "$STAGING/web/apps/web/.next/static"
 cp -R "$WEB_PUBLIC" "$STAGING/web/apps/web/public"
 
-echo "==> Bundle Node.js (optional, for self-contained installs)"
+echo "==> Smoke test staged bundle"
+# shellcheck source=../lib/node-fts5-check.sh
+source "$ROOT/scripts/lib/node-fts5-check.sh"
 NODE_BIN="$(command -v node)"
-NODE_DIR="$(dirname "$NODE_BIN")"
-if [[ -x "$NODE_BIN" ]]; then
-  mkdir -p "$STAGING/node/bin"
-  cp "$NODE_BIN" "$STAGING/node/bin/node"
-  if [[ -f "$NODE_DIR/npm" ]]; then
-    cp "$NODE_DIR/npm" "$STAGING/node/bin/npm" 2>/dev/null || true
-  fi
-fi
+bash "$ROOT/scripts/release/smoke-test-bundle.sh" "$STAGING" "$NODE_BIN"
 
 echo "==> Create tarball"
 mkdir -p "$OUT_DIR"

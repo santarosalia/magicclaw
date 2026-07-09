@@ -45,6 +45,8 @@ open http://localhost:3000
 
 데이터는 `~/.magicclaw/`에 저장됩니다 (`MAGICCLAW_HOME`으로 변경 가능).
 
+릴리스 번들은 **시스템 Node 22+**를 사용합니다. 일부 Node 빌드는 `node:sqlite` FTS5를 포함하지 않으며, 이 경우 세션 검색은 자동으로 LIKE 폴백으로 동작합니다.
+
 ### install.sh 옵션
 
 ```bash
@@ -70,7 +72,7 @@ curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
 
 ### 요구 사항
 
-- Node.js 22+
+- Node.js 22+ (시스템에 설치 — 릴리스 번들은 Node를 포함하지 않음)
 - pnpm 10
 
 ```bash

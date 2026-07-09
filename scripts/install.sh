@@ -140,6 +140,16 @@ check_prerequisites() {
     echo -e "${RED}tar is required${NC}" >&2
     exit 1
   fi
+  if ! command -v node >/dev/null 2>&1; then
+    echo -e "${RED}Node.js 22+ is required. Install from https://nodejs.org/ and re-run.${NC}" >&2
+    exit 1
+  fi
+  local major
+  major="$(node -p "process.versions.node.split('.')[0]")"
+  if [[ "$major" -lt 22 ]]; then
+    echo -e "${RED}Node.js 22+ required (found $(node -v))${NC}" >&2
+    exit 1
+  fi
 }
 
 download_and_install() {
