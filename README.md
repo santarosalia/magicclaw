@@ -22,11 +22,11 @@
 
 지원 플랫폼 (GitHub Releases):
 
-| 플랫폼 | 아티팩트 |
-|--------|----------|
-| Linux x64 | `magicclaw-{version}-linux-x64.tar.gz` |
+| 플랫폼                | 아티팩트                                  |
+| --------------------- | ----------------------------------------- |
+| Linux x64             | `magicclaw-{version}-linux-x64.tar.gz`    |
 | macOS (Apple Silicon) | `magicclaw-{version}-darwin-arm64.tar.gz` |
-| Windows x64 | `magicclaw-{version}-windows-x64.tar.gz` |
+| Windows x64           | `magicclaw-{version}-windows-x64.tar.gz`  |
 
 ---
 
@@ -56,12 +56,12 @@ open http://localhost:3000   # macOS
 curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
 ```
 
-| 옵션 | 설명 |
-|------|------|
-| `--version TAG` | 특정 릴리스 태그 설치 (예: `v0.1.0`) |
+| 옵션                   | 설명                                  |
+| ---------------------- | ------------------------------------- |
+| `--version TAG`        | 특정 릴리스 태그 설치 (예: `v0.1.0`)  |
 | `--magicclaw-home DIR` | 데이터 디렉터리 (기본 `~/.magicclaw`) |
-| `--skip-setup` | `.env` 초기화 단계 생략 |
-| `--non-interactive` | 프롬프트 없이 진행 |
+| `--skip-setup`         | `.env` 초기화 단계 생략               |
+| `--non-interactive`    | 프롬프트 없이 진행                    |
 
 ---
 
@@ -103,21 +103,21 @@ magicclaw start
 
 ### magicclaw CLI
 
-| 명령 | 설명 |
-|------|------|
-| `magicclaw start` | API + Web 서버 시작 |
-| `magicclaw stop` | 서버 중지 |
-| `magicclaw status` | 버전·프로세스 상태 |
-| `magicclaw setup` | 데이터 홈 및 `.env` 초기화 |
-| `magicclaw update` | 최신 릴리스로 업데이트 |
-| `magicclaw logs [api\|web]` | 로그 tail |
+| 명령                        | 설명                       |
+| --------------------------- | -------------------------- |
+| `magicclaw start`           | API + Web 서버 시작        |
+| `magicclaw stop`            | 서버 중지                  |
+| `magicclaw status`          | 버전·프로세스 상태         |
+| `magicclaw setup`           | 데이터 홈 및 `.env` 초기화 |
+| `magicclaw update`          | 최신 릴리스로 업데이트     |
+| `magicclaw logs [api\|web]` | 로그 tail                  |
 
 **데이터 위치**
 
-| OS | 기본 경로 |
-|----|-----------|
-| Linux / macOS | `~/.magicclaw/` |
-| Windows | `%USERPROFILE%\.magicclaw\` |
+| OS            | 기본 경로                   |
+| ------------- | --------------------------- |
+| Linux / macOS | `~/.magicclaw/`             |
+| Windows       | `%USERPROFILE%\.magicclaw\` |
 
 환경 변수 `MAGICCLAW_HOME`으로 변경할 수 있습니다. 설정 파일은 `MAGICCLAW_HOME/.env` (필수: `OPENAI_API_KEY`).
 

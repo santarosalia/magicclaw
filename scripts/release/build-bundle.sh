@@ -31,10 +31,13 @@ pnpm build:release
 
 echo "==> Staging bundle"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/bin" "$STAGING/api" "$STAGING/web" "$STAGING/share"
+mkdir -p "$STAGING/bin" "$STAGING/lib" "$STAGING/api" "$STAGING/web" "$STAGING/share"
 
 cp scripts/bin/magicclaw "$STAGING/bin/magicclaw"
 chmod +x "$STAGING/bin/magicclaw" 2>/dev/null || true
+cp scripts/lib/detect-platform.sh "$STAGING/lib/detect-platform.sh"
+cp scripts/lib/node-fts5-check.sh "$STAGING/lib/node-fts5-check.sh"
+chmod +x "$STAGING/lib/"*.sh 2>/dev/null || true
 if [[ "$PLATFORM" == windows-* ]] && [[ -f scripts/bin/magicclaw.cmd ]]; then
   cp scripts/bin/magicclaw.cmd "$STAGING/bin/magicclaw.cmd"
 fi
@@ -80,6 +83,12 @@ echo "==> Smoke test staged bundle"
 source "$ROOT/scripts/lib/node-fts5-check.sh"
 NODE_BIN="$(command -v node)"
 bash "$ROOT/scripts/release/smoke-test-bundle.sh" "$STAGING" "$NODE_BIN"
+if ! MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >/dev/null 2>&1; then
+  echo "Error: magicclaw status failed in staged bundle" >&2
+  MAGICCLAW_HOME="$(mktemp -d)" bash "$STAGING/bin/magicclaw" status >&2 || true
+  exit 1
+fi
+echo "CLI smoke test passed: magicclaw status"
 
 echo "==> Create tarball"
 mkdir -p "$OUT_DIR"

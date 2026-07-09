@@ -5,7 +5,7 @@
 # Downloads a prebuilt release bundle and installs the magicclaw CLI.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/santarosalia/magicclaw/main/scripts/install.sh | bash
+#   curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 #
 # Or with options:
 #   curl -fsSL ... | bash -s -- --version v0.1.0 --skip-setup
@@ -13,9 +13,58 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/detect-platform.sh
-source "$SCRIPT_DIR/lib/detect-platform.sh"
+# When piped (curl ... | bash), BASH_SOURCE[0] is unset and $0 is "bash".
+_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -n "$src" && "$src" != bash && "$src" != -bash ]]; then
+    cd "$(dirname "$src")" && pwd
+    return 0
+  fi
+  src="${0:-}"
+  if [[ -n "$src" && "$src" != bash && "$src" != -bash ]]; then
+    cd "$(dirname "$src")" && pwd
+    return 0
+  fi
+  return 1
+}
+SCRIPT_DIR="$(_resolve_script_dir 2>/dev/null || true)"
+
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/lib/detect-platform.sh" ]]; then
+  # shellcheck source=lib/detect-platform.sh
+  source "$SCRIPT_DIR/lib/detect-platform.sh"
+else
+  # Self-contained fallback for curl | bash (release asset has no lib/ sibling).
+  magicclaw_detect_platform() {
+    local os arch uname_s
+    uname_s="$(uname -s)"
+    case "$uname_s" in
+      Linux) os="linux" ;;
+      Darwin) os="darwin" ;;
+      MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+      *)
+        echo "Unsupported OS: $uname_s" >&2
+        return 1
+        ;;
+    esac
+
+    case "$(uname -m)" in
+      x86_64|amd64) arch="x64" ;;
+      arm64|aarch64)
+        if [[ "$os" == "windows" ]]; then
+          echo "Windows ARM64 is not supported yet. Use 64-bit Windows or WSL." >&2
+          return 1
+        fi
+        arch="arm64"
+        ;;
+      *)
+        echo "Unsupported architecture: $(uname -m)" >&2
+        return 1
+        ;;
+    esac
+
+    echo "${os}-${arch}"
+  }
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -149,9 +198,9 @@ download_and_install() {
   echo -e "${BLUE}Downloading ${asset}...${NC}"
   local tmpdir
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
 
   if ! curl -fsSL "$url" -o "$tmpdir/bundle.tar.gz"; then
+    rm -rf "$tmpdir"
     echo -e "${RED}Download failed: $url${NC}" >&2
     echo "Check that release $version exists for platform $platform" >&2
     exit 1
@@ -161,6 +210,7 @@ download_and_install() {
   mkdir -p "$INSTALL_DIR"
   rm -rf "${INSTALL_DIR:?}/"*
   tar -xzf "$tmpdir/bundle.tar.gz" -C "$INSTALL_DIR"
+  rm -rf "$tmpdir"
   chmod +x "$INSTALL_DIR/bin/magicclaw" 2>/dev/null || true
   if [[ -f "$INSTALL_DIR/bin/magicclaw.cmd" ]]; then
     chmod +x "$INSTALL_DIR/bin/magicclaw.cmd" 2>/dev/null || true
