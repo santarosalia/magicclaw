@@ -35,6 +35,8 @@ SCRIPT_DIR="$(_resolve_script_dir 2>/dev/null || true)"
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/lib/detect-platform.sh" ]]; then
   # shellcheck source=lib/detect-platform.sh
   source "$SCRIPT_DIR/lib/detect-platform.sh"
+  # shellcheck source=lib/resolve-release-tag.sh
+  source "$SCRIPT_DIR/lib/resolve-release-tag.sh"
 else
   # Self-contained fallback for curl | bash (release asset has no lib/ sibling).
   magicclaw_detect_platform() {
@@ -164,8 +166,15 @@ resolve_version() {
     return
   fi
   local tag
-  tag="$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  if declare -F magicclaw_resolve_release_tag >/dev/null 2>&1; then
+    tag="$(magicclaw_resolve_release_tag "$GITHUB_REPO" || true)"
+  else
+    local url
+    url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$GITHUB_REPO/releases/latest")" || true
+    if [[ "$url" =~ /releases/tag/([^/?#]+) ]]; then
+      tag="${BASH_REMATCH[1]}"
+    fi
+  fi
   if [[ -z "$tag" ]]; then
     echo -e "${RED}Could not resolve latest release. Specify --version vX.Y.Z${NC}" >&2
     exit 1

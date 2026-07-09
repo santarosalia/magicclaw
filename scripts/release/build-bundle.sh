@@ -38,6 +38,7 @@ chmod +x "$STAGING/bin/magicclaw" 2>/dev/null || true
 cp scripts/lib/detect-platform.sh "$STAGING/lib/detect-platform.sh"
 cp scripts/lib/node-fts5-check.sh "$STAGING/lib/node-fts5-check.sh"
 cp scripts/lib/normalize-path.sh "$STAGING/lib/normalize-path.sh"
+cp scripts/lib/resolve-release-tag.sh "$STAGING/lib/resolve-release-tag.sh"
 chmod +x "$STAGING/lib/"*.sh 2>/dev/null || true
 if [[ "$PLATFORM" == windows-* ]]; then
   for script in "$STAGING/bin/magicclaw" "$STAGING/lib/"*.sh; do
