@@ -6,6 +6,13 @@ BeforeAll {
     $script:HomeDir = 'C:\Users\test\.magicclaw'
 }
 
+Describe 'Join-MagicClawInstallPath' {
+    It 'builds Windows install paths consistently on non-Windows runners' {
+        Join-MagicClawInstallPath -Root $script:AppDir -ChildSegments @('bin', 'magicclaw.ps1') |
+            Should -Be 'C:\Users\test\.magicclaw\app\bin\magicclaw.ps1'
+    }
+}
+
 Describe 'Test-CommandLineReferencesMagicClawInstall' {
     It 'returns false for generic node entrypoints without install paths' {
         Test-CommandLineReferencesMagicClawInstall `

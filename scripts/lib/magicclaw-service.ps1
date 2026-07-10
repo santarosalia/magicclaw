@@ -90,6 +90,21 @@ function Read-PidFileValue {
     return 0
 }
 
+function Join-MagicClawInstallPath {
+    param(
+        [string]$Root,
+        [string[]]$ChildSegments
+    )
+
+    if (-not $Root) {
+        return ($ChildSegments | ForEach-Object { $_.Trim('\', '/') }) -join '\'
+    }
+
+    $normalizedRoot = $Root.TrimEnd('\', '/')
+    $childPath = ($ChildSegments | ForEach-Object { $_.Trim('\', '/').TrimStart('\', '/') }) -join '\'
+    return "$normalizedRoot\$childPath"
+}
+
 function Get-MagicClawKnownEntryPaths {
     param(
         [string]$AppDir,
@@ -97,18 +112,18 @@ function Get-MagicClawKnownEntryPaths {
     )
 
     $paths = @(
-        (Join-Path $AppDir 'api' 'dist' 'main.js'),
-        (Join-Path $AppDir 'web' 'apps' 'web' 'server.js'),
-        (Join-Path $AppDir 'web' 'server.js'),
-        (Join-Path $AppDir 'bin' 'magicclaw.ps1'),
-        (Join-Path $AppDir 'bin' 'magicclaw.cmd'),
-        (Join-Path $HomeDir 'run' 'api.pid'),
-        (Join-Path $HomeDir 'run' 'web.pid'),
-        (Join-Path $HomeDir 'run' 'api.log'),
-        (Join-Path $HomeDir 'run' 'web.log')
+        (Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('api', 'dist', 'main.js')),
+        (Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('web', 'apps', 'web', 'server.js')),
+        (Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('web', 'server.js')),
+        (Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('bin', 'magicclaw.ps1')),
+        (Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('bin', 'magicclaw.cmd')),
+        (Join-MagicClawInstallPath -Root $HomeDir -ChildSegments @('run', 'api.pid')),
+        (Join-MagicClawInstallPath -Root $HomeDir -ChildSegments @('run', 'web.pid')),
+        (Join-MagicClawInstallPath -Root $HomeDir -ChildSegments @('run', 'api.log')),
+        (Join-MagicClawInstallPath -Root $HomeDir -ChildSegments @('run', 'web.log'))
     )
 
-    return @($paths | ForEach-Object { $_.TrimEnd('\') } | Where-Object { $_ })
+    return @($paths | ForEach-Object { $_.TrimEnd('\', '/') } | Where-Object { $_ })
 }
 
 function Test-CommandLineContainsPathFragment {
@@ -144,6 +159,12 @@ function Test-CommandLineReferencesMagicClawInstall {
     }
 
     foreach ($entryPath in (Get-MagicClawKnownEntryPaths -AppDir $AppDir -HomeDir $HomeDir)) {
+        $belongsToInstall = (Test-CommandLineContainsPathFragment -CommandLine $entryPath -Fragment $AppDir) -or
+            (Test-CommandLineContainsPathFragment -CommandLine $entryPath -Fragment $HomeDir)
+        if (-not $belongsToInstall) {
+            continue
+        }
+
         if (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $entryPath) {
             return $true
         }
@@ -198,8 +219,8 @@ function Test-CommandLineReferencesLauncherForInstall {
         return $false
     }
 
-    $launcherPs1 = Join-Path $AppDir 'bin' 'magicclaw.ps1'
-    $launcherCmd = Join-Path $AppDir 'bin' 'magicclaw.cmd'
+    $launcherPs1 = Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('bin', 'magicclaw.ps1')
+    $launcherCmd = Join-MagicClawInstallPath -Root $AppDir -ChildSegments @('bin', 'magicclaw.cmd')
 
     return (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $launcherPs1) -or
         (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $launcherCmd)
