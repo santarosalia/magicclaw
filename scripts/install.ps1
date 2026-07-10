@@ -67,24 +67,6 @@ function Get-InstallScriptSearchRoots {
     return @($roots | Select-Object -Unique)
 }
 
-function Get-MagicClawReleaseAssetUrlCandidates {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$GitHubRepo,
-
-        [Parameter(Mandatory = $true)]
-        [string]$ReleaseTag,
-
-        [Parameter(Mandatory = $true)]
-        [string]$FileName
-    )
-
-    return @(
-        "https://github.com/$GitHubRepo/releases/download/$ReleaseTag/$FileName",
-        "https://raw.githubusercontent.com/$GitHubRepo/$ReleaseTag/scripts/lib/$FileName"
-    )
-}
-
 function Import-MagicClawPowerShellModule {
     param(
         [Parameter(Mandatory = $true)]
@@ -115,13 +97,19 @@ function Import-MagicClawPowerShellModule {
         }
     }
 
-    if (-not $ReleaseTag) {
-        throw "Could not locate $fileName locally and no release tag was provided for download."
-    }
-
     $tmp = Join-Path $env:TEMP ("magicclaw-$ModuleName-" + [guid]::NewGuid().ToString('n') + '.ps1')
     $errors = @()
-    $urls = Get-MagicClawReleaseAssetUrlCandidates -GitHubRepo $GitHubRepo -ReleaseTag $ReleaseTag -FileName $fileName
+    $urls = @(
+        "https://github.com/$GitHubRepo/releases/latest/download/$fileName"
+    )
+    if ($ReleaseTag) {
+        $urls += @(
+            "https://github.com/$GitHubRepo/releases/download/$ReleaseTag/$fileName",
+            "https://raw.githubusercontent.com/$GitHubRepo/$ReleaseTag/scripts/lib/$fileName"
+        )
+    }
+    $urls += "https://raw.githubusercontent.com/$GitHubRepo/main/scripts/lib/$fileName"
+    $urls = @($urls | Select-Object -Unique)
 
     try {
         foreach ($url in $urls) {
@@ -135,101 +123,11 @@ function Import-MagicClawPowerShellModule {
             }
         }
 
-        throw "Could not download $fileName for $ReleaseTag.`n$($errors -join [Environment]::NewLine)"
+        throw "Could not download $fileName.`n$($errors -join [Environment]::NewLine)"
     }
     finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
-}
-
-function Resolve-ReleaseTagBootstrap {
-    if ($Version) {
-        return $Version
-    }
-
-    foreach ($root in (Get-InstallScriptSearchRoots)) {
-        foreach ($candidate in @(
-                (Join-Path $root 'magicclaw-github.ps1'),
-                (Join-Path $root 'lib\magicclaw-github.ps1')
-            )) {
-            if (Test-Path -LiteralPath $candidate) {
-                . $candidate
-                return Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo -Version $Version
-            }
-        }
-    }
-
-    $tag = Get-MagicClawLatestReleaseTagFromRedirect -GitHubRepo $GitHubRepo
-    if ($tag) {
-        return $tag
-    }
-
-    $apiUrl = "https://api.github.com/repos/$GitHubRepo/releases/latest"
-    $headers = @{
-        Accept       = 'application/vnd.github+json'
-        'User-Agent' = 'magicclaw-installer'
-    }
-    if ($env:GITHUB_TOKEN) {
-        $headers.Authorization = "Bearer $env:GITHUB_TOKEN"
-    }
-
-    try {
-        $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get -ErrorAction Stop
-        if (-not $response.tag_name) {
-            throw 'Could not resolve latest release. Specify -Version vX.Y.Z'
-        }
-        return $response.tag_name
-    }
-    catch {
-        throw "Could not resolve latest release via redirect or GitHub API. Specify -Version vX.Y.Z or set GITHUB_TOKEN.`n$($_.Exception.Message)"
-    }
-}
-
-function Get-MagicClawLatestReleaseTagFromRedirect {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$GitHubRepo
-    )
-
-    $uri = "https://github.com/$GitHubRepo/releases/latest"
-
-    foreach ($method in @('HEAD', 'GET')) {
-        $location = $null
-
-        try {
-            $request = [System.Net.HttpWebRequest]::Create($uri)
-            $request.Method = $method
-            $request.AllowAutoRedirect = $false
-            $request.UserAgent = 'magicclaw-installer'
-            if ($env:GITHUB_TOKEN) {
-                $request.Headers.Add('Authorization', "Bearer $env:GITHUB_TOKEN")
-            }
-
-            $response = $request.GetResponse()
-            $location = $response.Headers['Location']
-            if (-not $location -and $response.ResponseUri) {
-                $location = $response.ResponseUri.AbsoluteUri
-            }
-            $response.Close()
-        }
-        catch {
-            $webResponse = $_.Exception.Response
-            if ($webResponse) {
-                $location = $webResponse.Headers['Location']
-                $webResponse.Close()
-            }
-        }
-
-        if ($location -is [array]) {
-            $location = $location[0]
-        }
-
-        if ($location -and $location -match '/releases/tag/([^/?#]+)') {
-            return [Uri]::UnescapeDataString($Matches[1])
-        }
-    }
-
-    return $null
 }
 
 function Initialize-InstallModules {
@@ -256,9 +154,6 @@ function Initialize-InstallModules {
         }
 
         if (-not $githubLoaded) {
-            if (-not $ReleaseTag) {
-                throw 'Could not load magicclaw-github.ps1 and no release tag was provided.'
-            }
             Import-MagicClawPowerShellModule `
                 -ModuleName 'magicclaw-github' `
                 -GitHubRepo $GitHubRepo `
@@ -286,9 +181,6 @@ function Initialize-InstallModules {
         }
 
         if (-not $serviceLoaded) {
-            if (-not $ReleaseTag) {
-                throw 'Could not load magicclaw-service.ps1 and no release tag was provided.'
-            }
             Import-MagicClawPowerShellModule `
                 -ModuleName 'magicclaw-service' `
                 -GitHubRepo $GitHubRepo `
@@ -443,7 +335,6 @@ function Install-ReleaseBundle {
 
     $verPlain = $ReleaseVersion -replace '^v', ''
     $asset = "magicclaw-$verPlain-$Platform.tar.gz"
-    $url = "https://github.com/$GitHubRepo/releases/download/$ReleaseVersion/$asset"
 
     Write-Host "Downloading $asset..." -ForegroundColor Blue
 
@@ -453,12 +344,11 @@ function Install-ReleaseBundle {
     $stagingDir = Join-Path $parentDir ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
-        }
-        catch {
-            throw "Download failed: $url`nCheck that release $ReleaseVersion exists for platform $Platform"
-        }
+        Invoke-MagicClawReleaseDownload `
+            -GitHubRepo $GitHubRepo `
+            -ReleaseTag $ReleaseVersion `
+            -FileName $asset `
+            -DestinationPath $archive
 
         Write-Host "Installing to $Dir..." -ForegroundColor Blue
 
@@ -584,8 +474,7 @@ try {
     Write-Banner
     Test-Prerequisites
 
-    $bootstrapTag = Resolve-ReleaseTagBootstrap
-    Initialize-InstallModules -ReleaseTag $bootstrapTag
+    Initialize-InstallModules -ReleaseTag $Version
 
     $platform = Get-MagicClawPlatform
     $releaseVersion = Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo -Version $Version
