@@ -336,24 +336,85 @@ function Write-LogSessionMarker {
             New-Item -ItemType File -Force -Path $path | Out-Null
         }
 
-        try {
-            $fs = [IO.File]::Open(
-                $path,
-                [IO.FileMode]::Append,
-                [IO.FileAccess]::Write,
-                [IO.FileShare]::ReadWrite
-            )
-            $writer = New-Object IO.StreamWriter($fs, ([Text.UTF8Encoding]::new($false)))
-            $writer.WriteLine('')
-            $writer.WriteLine($marker)
-            $writer.Flush()
-            $writer.Dispose()
-            $fs.Dispose()
+        # Use cmd append — works while `magicclaw logs` is reading the same file.
+        $cmd = "echo.>>`"$path`" & echo $marker>>`"$path`""
+        cmd.exe /d /c $cmd 1>$null 2>$null
+    }
+}
+
+function Follow-LogFiles {
+    param([string[]]$Paths)
+
+    $offsets = @{}
+    foreach ($path in $Paths) {
+        if (Test-Path -LiteralPath $path) {
+            Get-Content -LiteralPath $path -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            $offsets[$path] = (Get-Item -LiteralPath $path).Length
         }
-        catch {
-            Write-Warn "Could not write session marker to ${path}: $($_.Exception.Message)"
+        else {
+            $offsets[$path] = 0
         }
     }
+
+    while ($true) {
+        foreach ($path in $Paths) {
+            if (-not (Test-Path -LiteralPath $path)) {
+                continue
+            }
+
+            $length = (Get-Item -LiteralPath $path).Length
+            if ($length -lt $offsets[$path]) {
+                $offsets[$path] = 0
+            }
+
+            if ($length -le $offsets[$path]) {
+                continue
+            }
+
+            $stream = $null
+            $reader = $null
+            try {
+                $stream = [IO.File]::Open(
+                    $path,
+                    [IO.FileMode]::Open,
+                    [IO.FileAccess]::Read,
+                    [IO.FileShare]::ReadWrite
+                )
+                $stream.Seek($offsets[$path], [IO.SeekOrigin]::Begin) | Out-Null
+                $reader = New-Object IO.StreamReader($stream)
+                while (-not $reader.EndOfStream) {
+                    Write-Host $reader.ReadLine()
+                }
+                $offsets[$path] = $stream.Position
+            }
+            finally {
+                if ($reader) { $reader.Dispose() }
+                if ($stream) { $stream.Dispose() }
+            }
+        }
+
+        Start-Sleep -Milliseconds 400
+    }
+}
+
+function Stop-PortListener {
+    param(
+        [int]$Port,
+        [string]$Name
+    )
+
+    if ($Port -le 0) {
+        return
+    }
+
+    $listenerPid = Get-ListenerProcessId -Port $Port
+    if ($listenerPid -le 0) {
+        return
+    }
+
+    Write-Warn "Port $Port already in use by pid $listenerPid — stopping $Name before restart"
+    Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
 }
 
 function Get-ListenerProcessId {
@@ -418,6 +479,10 @@ function Start-MagicClawProcess {
         $existing = (Get-Content -LiteralPath $PidFile -Raw).Trim()
         Write-Warn "$Name already running (pid $existing)"
         return
+    }
+
+    if ($ListenPort -gt 0) {
+        Stop-PortListener -Port $ListenPort -Name $Name
     }
 
     $errorLog = Get-ErrorLogPath $LogFile
@@ -671,7 +736,7 @@ function Invoke-Logs {
     }
 
     try {
-        Get-Content -LiteralPath $paths -Tail 20 -Wait -ErrorAction Stop
+        Follow-LogFiles -Paths $paths
     }
     catch [System.Management.Automation.PipelineStoppedException] {
         # Ctrl+C while tailing logs
