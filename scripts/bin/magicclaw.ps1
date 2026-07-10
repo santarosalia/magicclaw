@@ -604,7 +604,7 @@ function Stop-AllMagicClawServices {
     $webPid = Read-PidFileValue -PidFile $WebPidFile
 
     foreach ($entry in @(
-            @{ Name = 'API'; Port = [int]$env:PORT; Pid = $apiPid }
+            @{ Name = 'API'; Port = [int]$env:PORT; Pid = $apiPid },
             @{ Name = 'Web'; Port = $ports.Web; Pid = $webPid }
         )) {
         $listenerPid = Get-ListenerProcessIdOnPort -Port $entry.Port
