@@ -206,6 +206,151 @@ function Get-ReleaseVersion {
     throw "Could not parse latest release redirect: $location"
 }
 
+function Get-MagicClawPortsFromEnv {
+    param([string]$HomeDir)
+
+    $apiPort = 4000
+    $envFile = Join-Path $HomeDir '.env'
+    if (Test-Path -LiteralPath $envFile) {
+        foreach ($line in Get-Content -LiteralPath $envFile) {
+            if ($line -match '^\s*PORT\s*=\s*(\d+)') {
+                $apiPort = [int]$Matches[1]
+            }
+        }
+    }
+
+    return @{
+        Api = $apiPort
+        Web = 3000
+    }
+}
+
+function Get-ListenerProcessIdOnPort {
+    param([int]$Port)
+
+    if ($Port -le 0) {
+        return 0
+    }
+
+    try {
+        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        if ($listeners.Count -gt 0) {
+            return [int]$listeners[0].OwningProcess
+        }
+    }
+    catch {
+    }
+
+    try {
+        $rows = netstat -ano | Select-String -Pattern 'LISTENING' | Select-String -Pattern ":$Port\s"
+        foreach ($row in $rows) {
+            if ($row.Line -match '\s(\d+)\s*$') {
+                return [int]$Matches[1]
+            }
+        }
+    }
+    catch {
+    }
+
+    return 0
+}
+
+function Stop-ProcessesUsingInstallPath {
+    param([string]$AppDir)
+
+    if (-not $AppDir) {
+        return
+    }
+
+    $needle = $AppDir.TrimEnd('\')
+    foreach ($name in @('node.exe', 'cmd.exe')) {
+        Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$needle*" } |
+            ForEach-Object {
+                Write-Host "Stopping $($_.Name) pid $($_.ProcessId) using install files..." -ForegroundColor Yellow
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+    }
+}
+
+function Stop-MagicClawServicesForInstall {
+    param(
+        [string]$HomeDir,
+        [string]$AppDir
+    )
+
+    $launcher = Join-Path $AppDir 'bin\magicclaw.ps1'
+    if (Test-Path -LiteralPath $launcher) {
+        try {
+            Write-Host 'Stopping running MagicClaw services...' -ForegroundColor Yellow
+            Invoke-MagicClawLauncher -AppInstallDir $AppDir stop | Out-Null
+        }
+        catch {
+            # Fall back to pid/port cleanup below.
+        }
+    }
+
+    $ports = Get-MagicClawPortsFromEnv -HomeDir $HomeDir
+    $runDir = Join-Path $HomeDir 'run'
+    foreach ($entry in @(
+            @{ Name = 'API'; File = Join-Path $runDir 'api.pid' }
+            @{ Name = 'Web'; File = Join-Path $runDir 'web.pid' }
+        )) {
+        if (-not (Test-Path -LiteralPath $entry.File)) {
+            continue
+        }
+
+        $pidText = (Get-Content -LiteralPath $entry.File -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($pidText -match '^\d+$') {
+            $processId = [int]$pidText
+            if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+                Write-Host "Stopping $($entry.Name) (pid $processId)..." -ForegroundColor Yellow
+                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        Remove-Item -LiteralPath $entry.File -Force -ErrorAction SilentlyContinue
+    }
+
+    foreach ($portEntry in @(
+            @{ Name = 'API'; Port = $ports.Api }
+            @{ Name = 'Web'; Port = $ports.Web }
+        )) {
+        $listenerPid = Get-ListenerProcessIdOnPort -Port $portEntry.Port
+        if ($listenerPid -gt 0) {
+            Write-Host "Stopping $($portEntry.Name) listener on port $($portEntry.Port) (pid $listenerPid)..." -ForegroundColor Yellow
+            Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Stop-ProcessesUsingInstallPath -AppDir $AppDir
+    Start-Sleep -Milliseconds 750
+}
+
+function Clear-InstallDirectoryContents {
+    param([string]$TargetDir)
+
+    if (-not (Test-Path -LiteralPath $TargetDir)) {
+        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+        return
+    }
+
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Get-ChildItem -LiteralPath $TargetDir -Force | Remove-Item -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -ge 5) {
+                throw "Could not replace install files under $TargetDir. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
+            }
+
+            Write-Host "Install files are locked; retrying ($attempt/5)..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 function Install-ReleaseBundle {
     param(
         [string]$Platform,
@@ -231,12 +376,8 @@ function Install-ReleaseBundle {
 
         Write-Host "Installing to $Dir..." -ForegroundColor Blue
 
-        if (Test-Path $Dir) {
-            Get-ChildItem -LiteralPath $Dir -Force | Remove-Item -Recurse -Force
-        }
-        else {
-            New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-        }
+        Stop-MagicClawServicesForInstall -HomeDir $MagicClawHome -AppDir $Dir
+        Clear-InstallDirectoryContents -TargetDir $Dir
 
         & tar -xzf $archive -C $Dir
         if ($LASTEXITCODE -ne 0) {

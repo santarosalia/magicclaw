@@ -849,6 +849,36 @@ function Get-LatestReleaseTag {
     throw "Could not parse latest release redirect: $location"
 }
 
+function Remove-InstallTreeWithRetry {
+    param(
+        [string]$TargetPath,
+        [string]$Label,
+        [int]$MaxAttempts = 5
+    )
+
+    if (-not (Test-Path -LiteralPath $TargetPath)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw "Could not replace $Label at $TargetPath. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
+            }
+
+            Write-Warn "$Label files are locked; stopping services and retrying ($attempt/$MaxAttempts)..."
+            Invoke-Stop
+            Stop-PortListener -Port $DefaultPort -Name 'API'
+            Stop-PortListener -Port $DefaultWebPort -Name 'Web'
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 function Invoke-Update {
     param([string]$Version)
 
@@ -863,7 +893,10 @@ function Invoke-Update {
     $url = "https://github.com/$GitHubRepo/releases/download/$Version/$asset"
 
     Write-Info "Updating MagicClaw to $Version (windows-x64)..."
-    try { Invoke-Stop } catch { }
+    Invoke-Stop
+    Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
+    Stop-PortListener -Port $DefaultWebPort -Name 'Web'
+    Start-Sleep -Milliseconds 750
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-update-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
@@ -883,9 +916,7 @@ function Invoke-Update {
 
         foreach ($name in @('api', 'web', 'share', 'bin', 'lib')) {
             $target = Join-Path $AppRoot $name
-            if (Test-Path -LiteralPath $target) {
-                Remove-Item -LiteralPath $target -Recurse -Force
-            }
+            Remove-InstallTreeWithRetry -TargetPath $target -Label $name
         }
 
         Copy-Item -LiteralPath (Join-Path $extractDir '*') -Destination $AppRoot -Recurse -Force
