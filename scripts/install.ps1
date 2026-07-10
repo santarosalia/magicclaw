@@ -271,6 +271,7 @@ function Stop-ExistingInstallIfNeeded {
     Invoke-MagicClawServiceStop `
         -HomeDir $MagicClawHome `
         -AppDir $Dir `
+        -Aggressive `
         -StopViaLauncher { Invoke-MagicClawLauncher -AppInstallDir $Dir stop }
 }
 

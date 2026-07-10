@@ -603,31 +603,15 @@ function Stop-MagicClawProcess {
 
 function Stop-AllMagicClawServices {
     Initialize-Env
-    Invoke-Stop
-
-    $ports = Get-ConfiguredPorts
-    $apiPid = Read-PidFileValue -PidFile $ApiPidFile
-    $webPid = Read-PidFileValue -PidFile $WebPidFile
-
-    foreach ($entry in @(
-            @{ Name = 'API'; Port = [int]$env:PORT; Pid = $apiPid },
-            @{ Name = 'Web'; Port = $ports.Web; Pid = $webPid }
-        )) {
-        $listenerPid = Get-ListenerProcessIdOnPort -Port $entry.Port
-        if ($listenerPid -le 0) {
-            continue
-        }
-
-        Stop-MagicClawManagedProcess `
-            -ProcessId $listenerPid `
-            -Label "$($entry.Name) listener on port $($entry.Port)" `
-            -AppDir $AppRoot `
-            -HomeDir $MagicClawHome `
-            -PidFromFile $entry.Pid `
-            -WriteStatus { Write-Warn $args[0] }
-    }
-
-    [void](Wait-ForMagicClawPortsFree -HomeDir $MagicClawHome)
+    Invoke-MagicClawServiceStop `
+        -HomeDir $MagicClawHome `
+        -AppDir $AppRoot `
+        -Aggressive `
+        -StopViaLauncher {
+            Stop-MagicClawProcess -Name 'API' -PidFile $ApiPidFile
+            Stop-MagicClawProcess -Name 'Web' -PidFile $WebPidFile
+        } `
+        -WriteStatus { Write-Warn $args[0] }
 }
 
 function Invoke-Start {
