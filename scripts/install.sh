@@ -208,15 +208,27 @@ download_and_install() {
   local version="$2"
   local ver_plain="${version#v}"
   local asset="magicclaw-${ver_plain}-${platform}.tar.gz"
-  local url="https://github.com/$GITHUB_REPO/releases/download/${version}/${asset}"
+  local url candidate
+  local urls=(
+    "https://github.com/$GITHUB_REPO/releases/download/${version}/${asset}"
+    "https://github.com/$GITHUB_REPO/releases/latest/download/${asset}"
+  )
 
   echo -e "${BLUE}Downloading ${asset}...${NC}"
   local tmpdir
   tmpdir="$(mktemp -d)"
 
-  if ! curl -fsSL "$url" -o "$tmpdir/bundle.tar.gz"; then
+  for url in "${urls[@]}"; do
+    if curl -fsSL "$url" -o "$tmpdir/bundle.tar.gz"; then
+      candidate="$url"
+      break
+    fi
+  done
+
+  if [[ -z "${candidate:-}" ]]; then
     rm -rf "$tmpdir"
-    echo -e "${RED}Download failed: $url${NC}" >&2
+    echo -e "${RED}Download failed for ${asset}${NC}" >&2
+    printf '%s\n' "${urls[@]}" >&2
     echo "Check that release $version exists for platform $platform" >&2
     exit 1
   fi

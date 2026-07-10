@@ -12,6 +12,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+catch {
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LibDir = Join-Path (Split-Path $ScriptDir -Parent) 'lib'
 foreach ($libFile in @('magicclaw-github.ps1', 'magicclaw-service.ps1')) {
@@ -858,7 +864,6 @@ function Invoke-Update {
 
     $verPlain = $Version -replace '^v', ''
     $asset = "magicclaw-$verPlain-windows-x64.tar.gz"
-    $url = "https://github.com/$GitHubRepo/releases/download/$Version/$asset"
 
     Write-Info "Updating MagicClaw to $Version (windows-x64)..."
 
@@ -867,7 +872,11 @@ function Invoke-Update {
     $stagingDir = Join-Path (Split-Path $AppRoot -Parent) ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
-        Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+        Invoke-MagicClawReleaseDownload `
+            -GitHubRepo $GitHubRepo `
+            -ReleaseTag $Version `
+            -FileName $asset `
+            -DestinationPath $archive
         New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
         & tar -xzf $archive -C $stagingDir
         if ($LASTEXITCODE -ne 0) {
