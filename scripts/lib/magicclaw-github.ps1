@@ -229,6 +229,57 @@ function Get-MagicClawReleaseAssetUrlCandidates {
     return @($urls | Select-Object -Unique)
 }
 
+function Get-MagicClawPowerShellModulePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ModuleName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubRepo,
+
+        [string]$ReleaseTag,
+
+        [string[]]$SearchRoots = @(),
+
+        [switch]$SkipLocalSearch
+    )
+
+    $fileName = "$ModuleName.ps1"
+
+    if (-not $SkipLocalSearch) {
+        foreach ($root in $SearchRoots) {
+            if (-not $root) {
+                continue
+            }
+
+            foreach ($candidate in @(
+                    (Join-Path $root $fileName),
+                    (Join-Path (Join-Path $root 'lib') $fileName)
+                )) {
+                if (Test-Path -LiteralPath $candidate) {
+                    return $candidate
+                }
+            }
+        }
+    }
+
+    $tmp = Join-Path $env:TEMP ("magicclaw-$ModuleName-" + [guid]::NewGuid().ToString('n') + '.ps1')
+    $errors = @()
+    $urls = Get-MagicClawReleaseAssetUrlCandidates -GitHubRepo $GitHubRepo -ReleaseTag $ReleaseTag -FileName $fileName
+
+    foreach ($url in $urls) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+            return $tmp
+        }
+        catch {
+            $errors += "$url -> $($_.Exception.Message)"
+        }
+    }
+
+    throw "Could not download $fileName.`n$($errors -join [Environment]::NewLine)"
+}
+
 function Import-MagicClawPowerShellModule {
     param(
         [Parameter(Mandatory = $true)]
@@ -242,44 +293,12 @@ function Import-MagicClawPowerShellModule {
         [string[]]$SearchRoots = @()
     )
 
-    $fileName = "$ModuleName.ps1"
-    foreach ($root in $SearchRoots) {
-        if (-not $root) {
-            continue
-        }
-
-        foreach ($candidate in @(
-                (Join-Path $root $fileName),
-                (Join-Path (Join-Path $root 'lib') $fileName)
-            )) {
-            if (Test-Path -LiteralPath $candidate) {
-                . $candidate
-                return
-            }
-        }
-    }
-
-    $tmp = Join-Path $env:TEMP ("magicclaw-$ModuleName-" + [guid]::NewGuid().ToString('n') + '.ps1')
-    $errors = @()
-    $urls = Get-MagicClawReleaseAssetUrlCandidates -GitHubRepo $GitHubRepo -ReleaseTag $ReleaseTag -FileName $fileName
-
-    try {
-        foreach ($url in $urls) {
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
-                . $tmp
-                return
-            }
-            catch {
-                $errors += "$url -> $($_.Exception.Message)"
-            }
-        }
-
-        throw "Could not download $fileName.`n$($errors -join [Environment]::NewLine)"
-    }
-    finally {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-    }
+    $path = Get-MagicClawPowerShellModulePath `
+        -ModuleName $ModuleName `
+        -GitHubRepo $GitHubRepo `
+        -ReleaseTag $ReleaseTag `
+        -SearchRoots $SearchRoots
+    . $path
 }
 
 function Invoke-MagicClawReleaseDownload {
