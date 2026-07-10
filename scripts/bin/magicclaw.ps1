@@ -13,6 +13,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$LibDir = Join-Path (Split-Path $ScriptDir -Parent) 'lib'
+foreach ($libFile in @('magicclaw-github.ps1', 'magicclaw-service.ps1')) {
+    $libPath = Join-Path $LibDir $libFile
+    if (-not (Test-Path -LiteralPath $libPath)) {
+        throw "Missing launcher library: $libPath (re-run the installer)"
+    }
+    . $libPath
+}
+
 if ($env:MAGICCLAW_INSTALL_DIR) {
     $AppRoot = [IO.Path]::GetFullPath($env:MAGICCLAW_INSTALL_DIR)
 }
@@ -29,7 +38,6 @@ $ApiLog = Join-Path $RunDir 'api.log'
 $WebLog = Join-Path $RunDir 'web.log'
 $VersionFile = Join-Path $AppRoot 'VERSION'
 $DefaultPort = 4000
-$DefaultWebPort = 3000
 $GitHubRepo = if ($env:MAGICCLAW_GITHUB_REPO) { $env:MAGICCLAW_GITHUB_REPO } else { 'santarosalia/magicclaw' }
 
 function Write-Info([string]$Text) { Write-Host $Text }
@@ -69,12 +77,18 @@ function Initialize-Env {
     New-Item -ItemType Directory -Force -Path $MagicClawHome, $RunDir | Out-Null
     $env:MAGICCLAW_HOME = $MagicClawHome
 
-    if (-not $env:PORT) { $env:PORT = [string]$DefaultPort }
-    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$DefaultWebPort" }
+    $ports = Get-MagicClawPortsFromEnvFile -HomeDir $MagicClawHome
+    if (-not $env:PORT) { $env:PORT = [string]$ports.Api }
+    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$($ports.Web)" }
     if (-not $env:NEXT_PUBLIC_API_URL) { $env:NEXT_PUBLIC_API_URL = "http://localhost:$($env:PORT)" }
     if (-not $env:HOSTNAME) { $env:HOSTNAME = '127.0.0.1' }
 
     Import-DotEnv (Join-Path $MagicClawHome '.env')
+
+    $ports = Get-MagicClawPortsFromEnvFile -HomeDir $MagicClawHome
+    if (-not $env:PORT) { $env:PORT = [string]$ports.Api }
+    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$($ports.Web)" }
+
     Set-SqliteNodeOptions
 }
 
@@ -227,8 +241,9 @@ function Sync-RuntimeEnvironment {
     param([hashtable]$Extra = @{})
 
     $env:MAGICCLAW_HOME = $MagicClawHome
-    if (-not $env:PORT) { $env:PORT = [string]$DefaultPort }
-    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$DefaultWebPort" }
+    $ports = Get-MagicClawPortsFromEnvFile -HomeDir $MagicClawHome
+    if (-not $env:PORT) { $env:PORT = [string]$ports.Api }
+    if (-not $env:WEB_ORIGIN) { $env:WEB_ORIGIN = "http://localhost:$($ports.Web)" }
     if (-not $env:NEXT_PUBLIC_API_URL) { $env:NEXT_PUBLIC_API_URL = "http://localhost:$($env:PORT)" }
     if (-not $env:HOSTNAME) { $env:HOSTNAME = '127.0.0.1' }
     Set-SqliteNodeOptions
@@ -397,40 +412,36 @@ function Follow-LogFiles {
     }
 }
 
-function Get-ProcessCommandLine {
-    param([int]$ProcessId)
+function Resolve-LaunchArguments {
+    param(
+        [string]$WorkingDirectory,
+        [string[]]$ArgumentList
+    )
 
-    if ($ProcessId -le 0) {
-        return $null
-    }
+    $resolved = @()
+    foreach ($arg in $ArgumentList) {
+        if ([string]::IsNullOrWhiteSpace($arg)) {
+            continue
+        }
 
-    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
-    if ($proc) {
-        return $proc.CommandLine
-    }
+        if ($arg.StartsWith('-')) {
+            $resolved += $arg
+            continue
+        }
 
-    return $null
-}
-
-function Test-ProcessUsesMagicClawInstall {
-    param([int]$ProcessId)
-
-    if ($ProcessId -le 0) {
-        return $false
-    }
-
-    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
-    if (-not $commandLine) {
-        return $false
-    }
-
-    foreach ($needle in @($AppRoot.TrimEnd('\'), $MagicClawHome.TrimEnd('\'))) {
-        if ($needle -and $commandLine -like "*$needle*") {
-            return $true
+        if ([IO.Path]::IsPathRooted($arg)) {
+            $resolved += $arg
+        }
+        else {
+            $resolved += (Join-Path $WorkingDirectory $arg)
         }
     }
 
-    return $false
+    return $resolved
+}
+
+function Get-ConfiguredPorts {
+    return Get-MagicClawPortsFromEnvFile -HomeDir $MagicClawHome
 }
 
 function Stop-PortListener {
@@ -443,49 +454,20 @@ function Stop-PortListener {
         return
     }
 
-    $listenerPid = Get-ListenerProcessId -Port $Port
+    $listenerPid = Get-ListenerProcessIdOnPort -Port $Port
     if ($listenerPid -le 0) {
         return
     }
 
-    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $listenerPid)) {
+    $pidFile = if ($Name -eq 'API') { $ApiPidFile } else { $WebPidFile }
+    $pidFromFile = Read-PidFileValue -PidFile $pidFile
+
+    if (-not (Test-ProcessIsMagicClawManaged -ProcessId $listenerPid -AppDir $AppRoot -HomeDir $MagicClawHome -PidFromFile $pidFromFile)) {
         throw "Port $Port is already in use by pid $listenerPid (not a MagicClaw process). Stop that process or change the port in ~/.magicclaw/.env"
     }
 
     Write-Warn "Port $Port already in use by MagicClaw pid $listenerPid — stopping $Name before restart"
-    Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
-}
-
-function Get-ListenerProcessId {
-    param([int]$Port)
-
-    if ($Port -le 0) {
-        return 0
-    }
-
-    try {
-        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-        if ($listeners.Count -gt 0) {
-            return [int]$listeners[0].OwningProcess
-        }
-    }
-    catch {
-        # fall through to netstat
-    }
-
-    try {
-        $rows = netstat -ano | Select-String -Pattern 'LISTENING' | Select-String -Pattern ":$Port\s"
-        foreach ($row in $rows) {
-            if ($row.Line -match '\s(\d+)\s*$') {
-                return [int]$Matches[1]
-            }
-        }
-    }
-    catch {
-    }
-
-    return 0
+    Stop-ProcessTreeGracefully -ProcessId $listenerPid
 }
 
 function Read-ProcessLogs {
@@ -536,10 +518,12 @@ function Start-MagicClawProcess {
 
     Sync-RuntimeEnvironment -Extra $Environment
 
+    $launchArgs = Resolve-LaunchArguments -WorkingDirectory $WorkingDirectory -ArgumentList $ArgumentList
+
     try {
         # Append redirect via cmd keeps logs readable while `magicclaw logs` is open
         # and avoids exclusive file locks from Start-Process -RedirectStandardOutput.
-        $argString = Format-ProcessArguments -ArgumentList $ArgumentList
+        $argString = Format-ProcessArguments -ArgumentList $launchArgs
         $launch = "cd /d `"$WorkingDirectory`" && `"$NodeBin`" $argString 1>>`"$LogFile`" 2>>`"$errorLog`""
         $process = Start-Process -FilePath 'cmd.exe' `
             -ArgumentList @('/c', $launch) `
@@ -566,7 +550,7 @@ function Start-MagicClawProcess {
 
         $processId = $process.Id
         if ($ListenPort -gt 0) {
-            $listenerPid = Get-ListenerProcessId -Port $ListenPort
+            $listenerPid = Get-ListenerProcessIdOnPort -Port $ListenPort
             if ($listenerPid -gt 0) {
                 $processId = $listenerPid
             }
@@ -605,29 +589,39 @@ function Stop-MagicClawProcess {
     }
 
     $processId = [int]((Get-Content -LiteralPath $PidFile -Raw).Trim())
-    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $processId)) {
-        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-        Write-Warn "$Name pid $processId is not owned by this MagicClaw install — removed stale pid file"
-        return
-    }
-
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($process) {
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-        $process.WaitForExit(5000) | Out-Null
-    }
-
-    try {
-        Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId" -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-    }
-    catch {
-    }
+    Stop-ProcessTreeGracefully -ProcessId $processId
 
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     Write-Ok "$Name stopped"
+}
+
+function Stop-AllMagicClawServices {
+    Initialize-Env
+    Invoke-Stop
+
+    $ports = Get-ConfiguredPorts
+    $apiPid = Read-PidFileValue -PidFile $ApiPidFile
+    $webPid = Read-PidFileValue -PidFile $WebPidFile
+
+    foreach ($entry in @(
+            @{ Name = 'API'; Port = [int]$env:PORT; Pid = $apiPid }
+            @{ Name = 'Web'; Port = $ports.Web; Pid = $webPid }
+        )) {
+        $listenerPid = Get-ListenerProcessIdOnPort -Port $entry.Port
+        if ($listenerPid -le 0) {
+            continue
+        }
+
+        Stop-MagicClawManagedProcess `
+            -ProcessId $listenerPid `
+            -Label "$($entry.Name) listener on port $($entry.Port)" `
+            -AppDir $AppRoot `
+            -HomeDir $MagicClawHome `
+            -PidFromFile $entry.Pid `
+            -WriteStatus { param($Text) Write-Warn $Text }
+    }
+
+    [void](Wait-ForMagicClawPortsFree -HomeDir $MagicClawHome)
 }
 
 function Invoke-Start {
@@ -646,17 +640,15 @@ function Invoke-Start {
     if (-not (Test-Path -LiteralPath $webEntry)) {
         $webEntry = $webServer
     }
-    else {
-        $webEntry = 'apps/web/server.js'
-    }
 
     $apiPort = [int]$env:PORT
+    $webPort = (Get-ConfiguredPorts).Web
 
     Write-Info "Starting MagicClaw API on port $apiPort..."
     Start-MagicClawProcess -Name 'API' `
         -NodeBin $node `
         -WorkingDirectory $apiDir `
-        -ArgumentList @('dist/main.js') `
+        -ArgumentList @((Join-Path $apiDir 'dist\main.js')) `
         -PidFile $ApiPidFile `
         -LogFile $ApiLog `
         -ListenPort $apiPort `
@@ -665,23 +657,23 @@ function Invoke-Start {
             Test-ApiHealth -Port $apiPort -ProcessId $ProcessId
         }
 
-    Write-Info "Starting MagicClaw Web on port $DefaultWebPort..."
+    Write-Info "Starting MagicClaw Web on port $webPort..."
     Start-MagicClawProcess -Name 'Web' `
         -NodeBin $node `
         -WorkingDirectory $webWorkDir `
         -ArgumentList @($webEntry) `
-        -Environment @{ PORT = [string]$DefaultWebPort; HOSTNAME = '127.0.0.1' } `
+        -Environment @{ PORT = [string]$webPort; HOSTNAME = '127.0.0.1' } `
         -PidFile $WebPidFile `
         -LogFile $WebLog `
-        -ListenPort $DefaultWebPort `
+        -ListenPort $webPort `
         -ReadyCheck {
             param($ProcessId)
-            Test-WebHealth -Port $DefaultWebPort -ProcessId $ProcessId
+            Test-WebHealth -Port $webPort -ProcessId $ProcessId
         }
 
     Write-Host ''
     Write-Info 'MagicClaw is running:'
-    Write-Info "  Web UI:  http://localhost:$DefaultWebPort"
+    Write-Info "  Web UI:  http://localhost:$webPort"
     Write-Info "  API:     http://localhost:$apiPort"
     Write-Info '  Logs:    magicclaw logs'
 }
@@ -739,11 +731,12 @@ function Invoke-Status {
         Show-StoppedLogHints -Name 'API' -LogFile $ApiLog -Running:$false
     }
 
+    $webPort = (Get-ConfiguredPorts).Web
     $webRunning = Test-ProcessRunning $WebPidFile
     if ($webRunning) {
         $pidValue = (Get-Content -LiteralPath $WebPidFile -Raw).Trim()
         Write-Host '  Web:  ' -NoNewline
-        Write-Ok "running (pid $pidValue, port $DefaultWebPort)"
+        Write-Ok "running (pid $pidValue, port $webPort)"
     }
     else {
         Write-Host '  Web:  ' -NoNewline
@@ -814,7 +807,8 @@ OPENAI_API_KEY=
 # API server port (default 4000)
 # PORT=4000
 
-# Web UI port is fixed at 3000 by the launcher
+# Web UI port (default 3000)
+# WEB_PORT=3000
 
 # CORS origin for API (default http://localhost:3000)
 # WEB_ORIGIN=http://localhost:3000
@@ -853,95 +847,13 @@ OPENAI_API_KEY=
     Write-Info 'Setup complete. Run: magicclaw start'
 }
 
-function Get-LatestReleaseTag {
-    $uri = "https://github.com/$GitHubRepo/releases/latest"
-    $location = $null
-
-    try {
-        $request = [System.Net.HttpWebRequest]::Create($uri)
-        $request.Method = 'HEAD'
-        $request.AllowAutoRedirect = $false
-        $response = $request.GetResponse()
-        $location = $response.Headers['Location']
-        if (-not $location -and $response.ResponseUri) {
-            $location = $response.ResponseUri.AbsoluteUri
-        }
-        $response.Close()
-    }
-    catch {
-        $webResponse = $_.Exception.Response
-        if ($webResponse) {
-            $location = $webResponse.Headers['Location']
-            $webResponse.Close()
-        }
-    }
-
-    if ($location -is [array]) {
-        $location = $location[0]
-    }
-
-    if ($location -and $location -match '/releases/tag/([^/?#]+)') {
-        return [Uri]::UnescapeDataString($Matches[1])
-    }
-
-    if ($location -and $location -match '/releases/latest/?$') {
-        throw 'Could not resolve latest release because GitHub did not redirect to a tag. Specify a version tag.'
-    }
-
-    if (-not $location) {
-        throw 'Could not resolve latest release. Specify a version tag.'
-    }
-
-    throw "Could not parse latest release redirect: $location"
-}
-
-function Remove-InstallTreeWithRetry {
-    param(
-        [string]$TargetPath,
-        [string]$Label,
-        [int]$MaxAttempts = 5
-    )
-
-    if (-not (Test-Path -LiteralPath $TargetPath)) {
-        return
-    }
-
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        try {
-            Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction Stop
-            return
-        }
-        catch {
-            if ($attempt -ge $MaxAttempts) {
-                throw "Could not replace $Label at $TargetPath. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
-            }
-
-            Write-Warn "$Label files are locked; stopping MagicClaw services and retrying ($attempt/$MaxAttempts)..."
-            Invoke-Stop
-            try {
-                Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
-            }
-            catch {
-                Write-Warn $_.Exception.Message
-            }
-            try {
-                Stop-PortListener -Port $DefaultWebPort -Name 'Web'
-            }
-            catch {
-                Write-Warn $_.Exception.Message
-            }
-            Start-Sleep -Seconds 2
-        }
-    }
-}
-
 function Invoke-Update {
     param([string]$Version)
 
     Initialize-Env
 
     if (-not $Version) {
-        $Version = Get-LatestReleaseTag
+        $Version = Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo
     }
 
     $verPlain = $Version -replace '^v', ''
@@ -949,49 +861,42 @@ function Invoke-Update {
     $url = "https://github.com/$GitHubRepo/releases/download/$Version/$asset"
 
     Write-Info "Updating MagicClaw to $Version (windows-x64)..."
-    Invoke-Stop
-    try {
-        Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
-    }
-    catch {
-        Write-Warn $_.Exception.Message
-    }
-    try {
-        Stop-PortListener -Port $DefaultWebPort -Name 'Web'
-    }
-    catch {
-        Write-Warn $_.Exception.Message
-    }
-    Start-Sleep -Milliseconds 750
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-update-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
+    $stagingDir = Join-Path (Split-Path $AppRoot -Parent) ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
         Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
-        & tar -xzf $archive -C $tmpdir.FullName
+        New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+        & tar -xzf $archive -C $stagingDir
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to extract $asset"
         }
 
-        $extractDir = $tmpdir.FullName
-        $nested = Join-Path $tmpdir.FullName 'magicclaw'
+        $extractDir = $stagingDir
+        $nested = Join-Path $stagingDir 'magicclaw'
         if (Test-Path -LiteralPath $nested) {
             $extractDir = $nested
         }
 
-        foreach ($name in @('api', 'web', 'share', 'bin', 'lib')) {
-            $target = Join-Path $AppRoot $name
-            Remove-InstallTreeWithRetry -TargetPath $target -Label $name
-        }
-
-        Copy-Item -LiteralPath (Join-Path $extractDir '*') -Destination $AppRoot -Recurse -Force
+        Stop-AllMagicClawServices
+        Swap-InstallDirectory `
+            -TargetDir $AppRoot `
+            -SourceDir $extractDir `
+            -HomeDir $MagicClawHome `
+            -AppDir $AppRoot `
+            -BeforeRetry { Stop-AllMagicClawServices } `
+            -WriteStatus { param($Text) Write-Warn $Text }
         Write-Ok "Updated to $Version"
         Write-Info 'Run: magicclaw start'
     }
     finally {
         if (Test-Path -LiteralPath $tmpdir.FullName) {
             Remove-Item -LiteralPath $tmpdir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stagingDir) {
+            Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

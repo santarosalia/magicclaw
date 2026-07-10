@@ -2,16 +2,10 @@
 # MagicClaw Installer (Windows PowerShell)
 # ============================================================================
 # Downloads a prebuilt release bundle and installs the magicclaw CLI.
+# Service stop/swap helpers live in scripts/lib/magicclaw-service.ps1.
 #
 # Usage:
 #   irm https://github.com/santarosalia/magicclaw/releases/latest/download/install.ps1 | iex
-#
-# Or with options (save first, then run):
-#   irm ... -OutFile install.ps1
-#   .\install.ps1 -Version v0.1.0 -SkipSetup
-#
-# Piped install with env vars:
-#   $env:MAGICCLAW_VERSION = 'v0.1.0'; irm ... | iex
 # ============================================================================
 
 #Requires -Version 5.1
@@ -38,7 +32,6 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 }
 catch {
-    # Best effort for older PowerShell; requests below will surface a clear error if TLS negotiation fails.
 }
 
 $GitHubRepo = if ($env:MAGICCLAW_GITHUB_REPO) { $env:MAGICCLAW_GITHUB_REPO } else { 'santarosalia/magicclaw' }
@@ -62,6 +55,99 @@ if (-not $PSBoundParameters.ContainsKey('NonInteractive')) {
 
 $BinDir = Join-Path $env:USERPROFILE '.local\bin'
 $ShimPath = Join-Path $BinDir 'magicclaw.cmd'
+
+function Get-InstallScriptSearchRoots {
+    $roots = @()
+    if ($PSScriptRoot) {
+        $roots += $PSScriptRoot
+    }
+    if ($MyInvocation.MyCommand.Path) {
+        $roots += (Split-Path $MyInvocation.MyCommand.Path -Parent)
+    }
+    return @($roots | Select-Object -Unique)
+}
+
+function Resolve-ReleaseTagBootstrap {
+    if ($Version) {
+        return $Version
+    }
+
+    foreach ($root in (Get-InstallScriptSearchRoots)) {
+        $candidate = Join-Path $root 'lib\magicclaw-github.ps1'
+        if (Test-Path -LiteralPath $candidate) {
+            . $candidate
+            return Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo -Version $Version
+        }
+    }
+
+    $apiUrl = "https://api.github.com/repos/$GitHubRepo/releases/latest"
+    $headers = @{
+        Accept     = 'application/vnd.github+json'
+        User-Agent = 'magicclaw-installer'
+    }
+    if ($env:GITHUB_TOKEN) {
+        $headers.Authorization = "Bearer $env:GITHUB_TOKEN"
+    }
+
+    $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get
+    if (-not $response.tag_name) {
+        throw 'Could not resolve latest release. Specify -Version vX.Y.Z'
+    }
+
+    return $response.tag_name
+}
+
+function Initialize-InstallModules {
+    param([string]$ReleaseTag)
+
+    $roots = Get-InstallScriptSearchRoots
+
+    if (-not (Get-Command Get-MagicClawLatestReleaseTag -ErrorAction SilentlyContinue)) {
+        $githubLoaded = $false
+        foreach ($root in $roots) {
+            $candidate = Join-Path $root 'lib\magicclaw-github.ps1'
+            if (Test-Path -LiteralPath $candidate) {
+                . $candidate
+                $githubLoaded = $true
+                break
+            }
+        }
+
+        if (-not $githubLoaded) {
+            if (-not $ReleaseTag) {
+                throw 'Could not load magicclaw-github.ps1 and no release tag was provided.'
+            }
+            Import-MagicClawPowerShellModule `
+                -ModuleName 'magicclaw-github' `
+                -GitHubRepo $GitHubRepo `
+                -ReleaseTag $ReleaseTag `
+                -SearchRoots $roots
+        }
+    }
+
+    if (-not (Get-Command Swap-InstallDirectory -ErrorAction SilentlyContinue)) {
+        $serviceLoaded = $false
+        foreach ($root in $roots) {
+            $candidate = Join-Path $root 'lib\magicclaw-service.ps1'
+            if (Test-Path -LiteralPath $candidate) {
+                . $candidate
+                $serviceLoaded = $true
+                break
+            }
+        }
+
+        if (-not $serviceLoaded) {
+            if (-not $ReleaseTag) {
+                throw 'Could not load magicclaw-service.ps1 and no release tag was provided.'
+            }
+            Import-MagicClawPowerShellModule `
+                -ModuleName 'magicclaw-service' `
+                -GitHubRepo $GitHubRepo `
+                -ReleaseTag $ReleaseTag `
+                -SearchRoots $roots
+        }
+    }
+}
 
 function Write-Banner {
     Write-Host ''
@@ -99,6 +185,7 @@ Environment (for piped install):
   MAGICCLAW_SKIP_SETUP=1
   MAGICCLAW_NON_INTERACTIVE=1
   MAGICCLAW_GITHUB_REPO
+  GITHUB_TOKEN            Optional — raises GitHub API rate limits
 "@
 }
 
@@ -164,142 +251,6 @@ function Test-Prerequisites {
     }
 }
 
-function Get-ReleaseVersion {
-    if ($Version) {
-        return $Version
-    }
-
-    $uri = "https://github.com/$GitHubRepo/releases/latest"
-    $location = $null
-
-    try {
-        $request = [System.Net.HttpWebRequest]::Create($uri)
-        $request.Method = 'HEAD'
-        $request.AllowAutoRedirect = $false
-        $response = $request.GetResponse()
-        $location = $response.Headers['Location']
-        if (-not $location -and $response.ResponseUri) {
-            $location = $response.ResponseUri.AbsoluteUri
-        }
-        $response.Close()
-    }
-    catch {
-        $webResponse = $_.Exception.Response
-        if ($webResponse) {
-            $location = $webResponse.Headers['Location']
-            $webResponse.Close()
-        }
-    }
-
-    if ($location -and $location -match '/releases/tag/([^/?#]+)') {
-        return [Uri]::UnescapeDataString($Matches[1])
-    }
-
-    if ($location -and $location -match '/releases/latest/?$') {
-        throw "Could not resolve latest release because GitHub did not redirect to a tag. Specify -Version vX.Y.Z"
-    }
-
-    if (-not $location) {
-        throw "Could not resolve latest release. Specify -Version vX.Y.Z"
-    }
-
-    throw "Could not parse latest release redirect: $location"
-}
-
-function Get-MagicClawPortsFromEnv {
-    param([string]$HomeDir)
-
-    $apiPort = 4000
-    $envFile = Join-Path $HomeDir '.env'
-    if (Test-Path -LiteralPath $envFile) {
-        foreach ($line in Get-Content -LiteralPath $envFile) {
-            if ($line -match '^\s*PORT\s*=\s*(\d+)') {
-                $apiPort = [int]$Matches[1]
-            }
-        }
-    }
-
-    return @{
-        Api = $apiPort
-        Web = 3000
-    }
-}
-
-function Get-ListenerProcessIdOnPort {
-    param([int]$Port)
-
-    if ($Port -le 0) {
-        return 0
-    }
-
-    try {
-        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-        if ($listeners.Count -gt 0) {
-            return [int]$listeners[0].OwningProcess
-        }
-    }
-    catch {
-    }
-
-    try {
-        $rows = netstat -ano | Select-String -Pattern 'LISTENING' | Select-String -Pattern ":$Port\s"
-        foreach ($row in $rows) {
-            if ($row.Line -match '\s(\d+)\s*$') {
-                return [int]$Matches[1]
-            }
-        }
-    }
-    catch {
-    }
-
-    return 0
-}
-
-function Get-ProcessCommandLine {
-    param([int]$ProcessId)
-
-    if ($ProcessId -le 0) {
-        return $null
-    }
-
-    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
-    if ($proc) {
-        return $proc.CommandLine
-    }
-
-    return $null
-}
-
-function Test-ProcessUsesMagicClawPaths {
-    param(
-        [int]$ProcessId,
-        [string]$AppDir,
-        [string]$HomeDir
-    )
-
-    if ($ProcessId -le 0) {
-        return $false
-    }
-
-    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
-    if (-not $commandLine) {
-        return $false
-    }
-
-    $needles = @(
-        $AppDir.TrimEnd('\')
-        $HomeDir.TrimEnd('\')
-    ) | Where-Object { $_ }
-
-    foreach ($needle in $needles) {
-        if ($commandLine -like "*$needle*") {
-            return $true
-        }
-    }
-
-    return $false
-}
-
 function Test-ExistingMagicClawInstall {
     param(
         [string]$AppDir,
@@ -324,131 +275,15 @@ function Test-ExistingMagicClawInstall {
     return $false
 }
 
-function Stop-ProcessIfOwnedByMagicClaw {
-    param(
-        [int]$ProcessId,
-        [string]$Label,
-        [string]$AppDir,
-        [string]$HomeDir
-    )
-
-    if ($ProcessId -le 0) {
+function Stop-ExistingInstallIfNeeded {
+    if (-not (Test-ExistingMagicClawInstall -AppDir $Dir -HomeDir $MagicClawHome)) {
         return
     }
 
-    if (-not (Test-ProcessUsesMagicClawPaths -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir)) {
-        Write-Host "Skipping $Label (pid $ProcessId) — not owned by this MagicClaw install" -ForegroundColor Yellow
-        return
-    }
-
-    Write-Host "Stopping $Label (pid $ProcessId)..." -ForegroundColor Yellow
-    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
-}
-
-function Stop-ProcessesUsingInstallPath {
-    param([string]$AppDir)
-
-    if (-not $AppDir) {
-        return
-    }
-
-    $needle = $AppDir.TrimEnd('\')
-    foreach ($name in @('node.exe', 'cmd.exe')) {
-        Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$needle*" } |
-            ForEach-Object {
-                Write-Host "Stopping $($_.Name) pid $($_.ProcessId) using install files..." -ForegroundColor Yellow
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-    }
-}
-
-function Stop-MagicClawServicesForInstall {
-    param(
-        [string]$HomeDir,
-        [string]$AppDir
-    )
-
-    if (-not (Test-ExistingMagicClawInstall -AppDir $AppDir -HomeDir $HomeDir)) {
-        return
-    }
-
-    $launcher = Join-Path $AppDir 'bin\magicclaw.ps1'
-    if (Test-Path -LiteralPath $launcher) {
-        try {
-            Write-Host 'Stopping running MagicClaw services...' -ForegroundColor Yellow
-            Invoke-MagicClawLauncher -AppInstallDir $AppDir stop | Out-Null
-        }
-        catch {
-            # Fall back to scoped pid/port cleanup below.
-        }
-    }
-
-    $ports = Get-MagicClawPortsFromEnv -HomeDir $HomeDir
-    $runDir = Join-Path $HomeDir 'run'
-    foreach ($entry in @(
-            @{ Name = 'API'; File = Join-Path $runDir 'api.pid' }
-            @{ Name = 'Web'; File = Join-Path $runDir 'web.pid' }
-        )) {
-        if (-not (Test-Path -LiteralPath $entry.File)) {
-            continue
-        }
-
-        $pidText = (Get-Content -LiteralPath $entry.File -Raw -ErrorAction SilentlyContinue).Trim()
-        if ($pidText -match '^\d+$') {
-            Stop-ProcessIfOwnedByMagicClaw `
-                -ProcessId ([int]$pidText) `
-                -Label $entry.Name `
-                -AppDir $AppDir `
-                -HomeDir $HomeDir
-        }
-
-        Remove-Item -LiteralPath $entry.File -Force -ErrorAction SilentlyContinue
-    }
-
-    foreach ($portEntry in @(
-            @{ Name = 'API'; Port = $ports.Api }
-            @{ Name = 'Web'; Port = $ports.Web }
-        )) {
-        $listenerPid = Get-ListenerProcessIdOnPort -Port $portEntry.Port
-        Stop-ProcessIfOwnedByMagicClaw `
-            -ProcessId $listenerPid `
-            -Label "$($portEntry.Name) listener on port $($portEntry.Port)" `
-            -AppDir $AppDir `
-            -HomeDir $HomeDir
-    }
-
-    Stop-ProcessesUsingInstallPath -AppDir $AppDir
-    Start-Sleep -Milliseconds 750
-}
-
-function Clear-InstallDirectoryContents {
-    param(
-        [string]$TargetDir,
-        [string]$HomeDir,
-        [string]$AppDir
-    )
-
-    if (-not (Test-Path -LiteralPath $TargetDir)) {
-        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-        return
-    }
-
-    for ($attempt = 1; $attempt -le 5; $attempt++) {
-        try {
-            Get-ChildItem -LiteralPath $TargetDir -Force | Remove-Item -Recurse -Force -ErrorAction Stop
-            return
-        }
-        catch {
-            if ($attempt -ge 5) {
-                throw "Could not replace install files under $TargetDir. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
-            }
-
-            Write-Host "Install files are locked; retrying ($attempt/5)..." -ForegroundColor Yellow
-            Stop-MagicClawServicesForInstall -HomeDir $HomeDir -AppDir $AppDir
-            Start-Sleep -Seconds 2
-        }
-    }
+    Invoke-MagicClawServiceStop `
+        -HomeDir $MagicClawHome `
+        -AppDir $Dir `
+        -StopViaLauncher { Invoke-MagicClawLauncher -AppInstallDir $Dir stop }
 }
 
 function Install-ReleaseBundle {
@@ -465,6 +300,8 @@ function Install-ReleaseBundle {
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-install-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
+    $parentDir = Split-Path $Dir -Parent
+    $stagingDir = Join-Path $parentDir ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
         try {
@@ -476,17 +313,32 @@ function Install-ReleaseBundle {
 
         Write-Host "Installing to $Dir..." -ForegroundColor Blue
 
-        Stop-MagicClawServicesForInstall -HomeDir $MagicClawHome -AppDir $Dir
-        Clear-InstallDirectoryContents -TargetDir $Dir -HomeDir $MagicClawHome -AppDir $Dir
-
-        & tar -xzf $archive -C $Dir
+        New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+        & tar -xzf $archive -C $stagingDir
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to extract $asset"
         }
+
+        $extractDir = $stagingDir
+        $nested = Join-Path $stagingDir 'magicclaw'
+        if (Test-Path -LiteralPath $nested) {
+            $extractDir = $nested
+        }
+
+        Stop-ExistingInstallIfNeeded
+        Swap-InstallDirectory `
+            -TargetDir $Dir `
+            -SourceDir $extractDir `
+            -HomeDir $MagicClawHome `
+            -AppDir $Dir `
+            -BeforeRetry ${function:Stop-ExistingInstallIfNeeded}
     }
     finally {
         if ($tmpdir -and (Test-Path $tmpdir.FullName)) {
             Remove-Item -LiteralPath $tmpdir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stagingDir) {
+            Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -504,12 +356,10 @@ function Install-Shim {
         $resolvedAppRoot = (Convert-Path -LiteralPath $AppInstallDir)
     }
     catch {
-        # Convert-Path can fail on some UNC/edge paths; keep the provided path.
     }
 
     $bashMagicClawHome = $MagicClawHome -replace '\\', '/'
 
-    # Delegate to the bundle's native PowerShell launcher via magicclaw.cmd.
     @"
 @echo off
 setlocal
@@ -553,13 +403,17 @@ function Ensure-UserPath {
         return
     }
 
-    $newPath = if ($segments.Count -gt 0) { ($segments + $BinDir) -join ';' } else { $BinDir }
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-    if ($env:Path -notmatch [regex]::Escape($BinDir)) {
-        $env:Path = "$env:Path;$BinDir"
+    try {
+        $newPath = if ($segments.Count -gt 0) { ($segments + $BinDir) -join ';' } else { $BinDir }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        if ($env:Path -notmatch [regex]::Escape($BinDir)) {
+            $env:Path = "$env:Path;$BinDir"
+        }
+        Write-Host 'Added to user PATH. Restart your terminal to apply everywhere.' -ForegroundColor Green
     }
-
-    Write-Host 'Added to user PATH. Restart your terminal to apply everywhere.' -ForegroundColor Green
+    catch {
+        Write-Host "Could not update user PATH (policy or permissions). Add manually: $BinDir" -ForegroundColor Yellow
+    }
 }
 
 function Invoke-MagicClawSetup {
@@ -581,8 +435,12 @@ try {
     Write-Banner
     Test-Prerequisites
 
+    $bootstrapTag = Resolve-ReleaseTagBootstrap
+    Initialize-InstallModules -ReleaseTag $bootstrapTag
+
     $platform = Get-MagicClawPlatform
-    $releaseVersion = Get-ReleaseVersion
+    $releaseVersion = Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo -Version $Version
+    $ports = Get-MagicClawPortsFromEnvFile -HomeDir $MagicClawHome
 
     Write-Host "Platform:  $platform"
     Write-Host "Version:   $releaseVersion"
@@ -600,7 +458,7 @@ try {
     Write-Host ''
     Write-Host 'Next steps:'
     Write-Host '  magicclaw start     # Start API + Web'
-    Write-Host '  Start-Process http://localhost:3000'
+    Write-Host "  Start-Process http://localhost:$($ports.Web)"
     Write-Host ''
     Write-Host 'Other commands:'
     Write-Host '  magicclaw status'
