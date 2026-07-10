@@ -97,14 +97,14 @@ function Get-MagicClawKnownEntryPaths {
     )
 
     $paths = @(
-        (Join-Path $AppDir 'api\dist\main.js')
-        (Join-Path $AppDir 'web\apps\web\server.js')
-        (Join-Path $AppDir 'web\server.js')
-        (Join-Path $AppDir 'bin\magicclaw.ps1')
-        (Join-Path $AppDir 'bin\magicclaw.cmd')
-        (Join-Path $HomeDir 'run\api.pid')
-        (Join-Path $HomeDir 'run\web.pid')
-        (Join-Path $HomeDir 'run\api.log')
+        (Join-Path $AppDir 'api\dist\main.js'),
+        (Join-Path $AppDir 'web\apps\web\server.js'),
+        (Join-Path $AppDir 'web\server.js'),
+        (Join-Path $AppDir 'bin\magicclaw.ps1'),
+        (Join-Path $AppDir 'bin\magicclaw.cmd'),
+        (Join-Path $HomeDir 'run\api.pid'),
+        (Join-Path $HomeDir 'run\web.pid'),
+        (Join-Path $HomeDir 'run\api.log'),
         (Join-Path $HomeDir 'run\web.log')
     )
 
@@ -205,6 +205,10 @@ function Stop-ProcessTreeGracefully {
     }
 }
 
+function Get-DefaultServiceWriteStatus {
+    return { Write-Host $args[0] -ForegroundColor Yellow }
+}
+
 function Stop-MagicClawManagedProcess {
     param(
         [int]$ProcessId,
@@ -212,8 +216,12 @@ function Stop-MagicClawManagedProcess {
         [string]$AppDir,
         [string]$HomeDir,
         [int]$PidFromFile = 0,
-        [scriptblock]$WriteStatus = { param($Text) Write-Host $Text -ForegroundColor Yellow }
+        [scriptblock]$WriteStatus
     )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
 
     if ($ProcessId -le 0) {
         return
@@ -232,8 +240,12 @@ function Stop-ProcessesFromPidFiles {
     param(
         [string]$HomeDir,
         [string]$AppDir,
-        [scriptblock]$WriteStatus = { param($Text) Write-Host $Text -ForegroundColor Yellow }
+        [scriptblock]$WriteStatus
     )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
 
     $runDir = Join-Path $HomeDir 'run'
     foreach ($entry in @(
@@ -283,8 +295,12 @@ function Invoke-MagicClawServiceStop {
         [string]$HomeDir,
         [string]$AppDir,
         [scriptblock]$StopViaLauncher,
-        [scriptblock]$WriteStatus = { param($Text) Write-Host $Text -ForegroundColor Yellow }
+        [scriptblock]$WriteStatus
     )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
 
     $launcher = Join-Path $AppDir 'bin\magicclaw.ps1'
     if ($StopViaLauncher -and (Test-Path -LiteralPath $launcher)) {
@@ -325,9 +341,13 @@ function Swap-InstallDirectory {
         [string]$HomeDir,
         [string]$AppDir,
         [scriptblock]$BeforeRetry,
-        [scriptblock]$WriteStatus = { param($Text) Write-Host $Text -ForegroundColor Yellow },
+        [scriptblock]$WriteStatus,
         [int]$MaxAttempts = 5
     )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
 
     $parentDir = Split-Path $TargetDir -Parent
     $leaf = Split-Path $TargetDir -Leaf

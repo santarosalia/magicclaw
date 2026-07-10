@@ -618,7 +618,7 @@ function Stop-AllMagicClawServices {
             -AppDir $AppRoot `
             -HomeDir $MagicClawHome `
             -PidFromFile $entry.Pid `
-            -WriteStatus { param($Text) Write-Warn $Text }
+            -WriteStatus { Write-Warn $args[0] }
     }
 
     [void](Wait-ForMagicClawPortsFree -HomeDir $MagicClawHome)
@@ -887,7 +887,7 @@ function Invoke-Update {
             -HomeDir $MagicClawHome `
             -AppDir $AppRoot `
             -BeforeRetry { Stop-AllMagicClawServices } `
-            -WriteStatus { param($Text) Write-Warn $Text }
+            -WriteStatus { Write-Warn $args[0] }
         Write-Ok "Updated to $Version"
         Write-Info 'Run: magicclaw start'
     }
