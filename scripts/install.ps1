@@ -67,7 +67,7 @@ function Get-InstallScriptSearchRoots {
     return @($roots | Select-Object -Unique)
 }
 
-function Import-MagicClawPowerShellModule {
+function Get-MagicClawPowerShellModulePath {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ModuleName,
@@ -77,22 +77,26 @@ function Import-MagicClawPowerShellModule {
 
         [string]$ReleaseTag,
 
-        [string[]]$SearchRoots = @()
+        [string[]]$SearchRoots = @(),
+
+        [switch]$SkipLocalSearch
     )
 
     $fileName = "$ModuleName.ps1"
-    foreach ($root in $SearchRoots) {
-        if (-not $root) {
-            continue
-        }
 
-        foreach ($candidate in @(
-                (Join-Path $root $fileName),
-                (Join-Path (Join-Path $root 'lib') $fileName)
-            )) {
-            if (Test-Path -LiteralPath $candidate) {
-                . $candidate
-                return
+    if (-not $SkipLocalSearch) {
+        foreach ($root in $SearchRoots) {
+            if (-not $root) {
+                continue
+            }
+
+            foreach ($candidate in @(
+                    (Join-Path $root $fileName),
+                    (Join-Path (Join-Path $root 'lib') $fileName)
+                )) {
+                if (Test-Path -LiteralPath $candidate) {
+                    return $candidate
+                }
             }
         }
     }
@@ -111,83 +115,26 @@ function Import-MagicClawPowerShellModule {
     $urls += "https://raw.githubusercontent.com/$GitHubRepo/main/scripts/lib/$fileName"
     $urls = @($urls | Select-Object -Unique)
 
-    try {
-        foreach ($url in $urls) {
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
-                . $tmp
-                return
-            }
-            catch {
-                $errors += "$url -> $($_.Exception.Message)"
-            }
+    foreach ($url in $urls) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+            return $tmp
         }
+        catch {
+            $errors += "$url -> $($_.Exception.Message)"
+        }
+    }
 
-        throw "Could not download $fileName.`n$($errors -join [Environment]::NewLine)"
-    }
-    finally {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-    }
+    throw "Could not download $fileName.`n$($errors -join [Environment]::NewLine)"
 }
 
-function Initialize-InstallModules {
-    param([string]$ReleaseTag)
+function Test-MagicClawInstallCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
 
-    $roots = Get-InstallScriptSearchRoots
-
-    if (-not (Get-Command Get-MagicClawLatestReleaseTag -ErrorAction SilentlyContinue)) {
-        $githubLoaded = $false
-        foreach ($root in $roots) {
-            foreach ($candidate in @(
-                    (Join-Path $root 'magicclaw-github.ps1'),
-                    (Join-Path $root 'lib\magicclaw-github.ps1')
-                )) {
-                if (Test-Path -LiteralPath $candidate) {
-                    . $candidate
-                    $githubLoaded = $true
-                    break
-                }
-            }
-            if ($githubLoaded) {
-                break
-            }
-        }
-
-        if (-not $githubLoaded) {
-            Import-MagicClawPowerShellModule `
-                -ModuleName 'magicclaw-github' `
-                -GitHubRepo $GitHubRepo `
-                -ReleaseTag $ReleaseTag `
-                -SearchRoots $roots
-        }
-    }
-
-    if (-not (Get-Command Swap-InstallDirectory -ErrorAction SilentlyContinue)) {
-        $serviceLoaded = $false
-        foreach ($root in $roots) {
-            foreach ($candidate in @(
-                    (Join-Path $root 'magicclaw-service.ps1'),
-                    (Join-Path $root 'lib\magicclaw-service.ps1')
-                )) {
-                if (Test-Path -LiteralPath $candidate) {
-                    . $candidate
-                    $serviceLoaded = $true
-                    break
-                }
-            }
-            if ($serviceLoaded) {
-                break
-            }
-        }
-
-        if (-not $serviceLoaded) {
-            Import-MagicClawPowerShellModule `
-                -ModuleName 'magicclaw-service' `
-                -GitHubRepo $GitHubRepo `
-                -ReleaseTag $ReleaseTag `
-                -SearchRoots $roots
-        }
-    }
+    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
 function Write-Banner {
@@ -474,7 +421,35 @@ try {
     Write-Banner
     Test-Prerequisites
 
-    Initialize-InstallModules -ReleaseTag $Version
+    # Dot-source lib at script scope — piped iex loses functions loaded inside nested functions.
+    $skipLocalLibSearch = $NonInteractive
+    $installSearchRoots = if ($skipLocalLibSearch) { @() } else { Get-InstallScriptSearchRoots }
+
+    if (-not (Test-MagicClawInstallCommand -Name 'Get-MagicClawLatestReleaseTag')) {
+        $githubLibPath = Get-MagicClawPowerShellModulePath `
+            -ModuleName 'magicclaw-github' `
+            -GitHubRepo $GitHubRepo `
+            -ReleaseTag $Version `
+            -SearchRoots $installSearchRoots `
+            -SkipLocalSearch:$skipLocalLibSearch
+        . $githubLibPath
+        if (-not (Test-MagicClawInstallCommand -Name 'Get-MagicClawLatestReleaseTag')) {
+            throw "Failed to load magicclaw-github.ps1 (Get-MagicClawLatestReleaseTag missing). Path: $githubLibPath"
+        }
+    }
+
+    if (-not (Test-MagicClawInstallCommand -Name 'Swap-InstallDirectory')) {
+        $serviceLibPath = Get-MagicClawPowerShellModulePath `
+            -ModuleName 'magicclaw-service' `
+            -GitHubRepo $GitHubRepo `
+            -ReleaseTag $Version `
+            -SearchRoots $installSearchRoots `
+            -SkipLocalSearch:$skipLocalLibSearch
+        . $serviceLibPath
+        if (-not (Test-MagicClawInstallCommand -Name 'Swap-InstallDirectory')) {
+            throw "Failed to load magicclaw-service.ps1 (Swap-InstallDirectory missing). Path: $serviceLibPath"
+        }
+    }
 
     $platform = Get-MagicClawPlatform
     $releaseVersion = Get-MagicClawLatestReleaseTag -GitHubRepo $GitHubRepo -Version $Version
