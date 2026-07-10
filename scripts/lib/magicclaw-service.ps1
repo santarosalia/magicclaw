@@ -1,5 +1,5 @@
 # MagicClaw Windows service/process helpers.
-# Dot-source from install.ps1 or bin/magicclaw.ps1 — not standalone.
+# Dot-source from install.ps1 or bin/magicclaw.ps1 - not standalone.
 
 function Get-MagicClawPortsFromEnvFile {
     param([string]$HomeDir)
@@ -234,8 +234,9 @@ function Clear-ShellLocationUnderPath {
 
     try {
         $normalizedTarget = $TargetPath.TrimEnd('\')
+        $normalizedPrefix = $normalizedTarget + '\'
         $current = (Get-Location).Path
-        if ($current -and ($current -eq $normalizedTarget -or $current.StartsWith("$normalizedTarget\"))) {
+        if ($current -and ($current -eq $normalizedTarget -or $current.StartsWith($normalizedPrefix))) {
             Set-Location -LiteralPath $env:TEMP
         }
     }
@@ -274,7 +275,7 @@ function Stop-MagicClawPortListeners {
             Stop-ProcessTreeGracefully -ProcessId $listenerPid
         }
         else {
-            & $WriteStatus "Skipping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid) — not owned by this MagicClaw install"
+            & $WriteStatus "Skipping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid) - not owned by this MagicClaw install"
         }
     }
 }
@@ -445,12 +446,12 @@ function Stop-MagicClawManagedProcess {
     }
 
     if ($ProtectedProcessIds -and $ProtectedProcessIds.Contains($ProcessId)) {
-        & $WriteStatus "Skipping $Label (pid $ProcessId) — protected install session process"
+        & $WriteStatus "Skipping $Label (pid $ProcessId) - protected install session process"
         return
     }
 
     if (-not (Test-ProcessIsMagicClawManaged -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir -PidFromFile $PidFromFile)) {
-        & $WriteStatus "Skipping $Label (pid $ProcessId) — not owned by this MagicClaw install"
+        & $WriteStatus "Skipping $Label (pid $ProcessId) - not owned by this MagicClaw install"
         return
     }
 
