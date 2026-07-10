@@ -97,18 +97,33 @@ function Get-MagicClawKnownEntryPaths {
     )
 
     $paths = @(
-        (Join-Path $AppDir 'api\dist\main.js'),
-        (Join-Path $AppDir 'web\apps\web\server.js'),
-        (Join-Path $AppDir 'web\server.js'),
-        (Join-Path $AppDir 'bin\magicclaw.ps1'),
-        (Join-Path $AppDir 'bin\magicclaw.cmd'),
-        (Join-Path $HomeDir 'run\api.pid'),
-        (Join-Path $HomeDir 'run\web.pid'),
-        (Join-Path $HomeDir 'run\api.log'),
-        (Join-Path $HomeDir 'run\web.log')
+        (Join-Path $AppDir 'api' 'dist' 'main.js'),
+        (Join-Path $AppDir 'web' 'apps' 'web' 'server.js'),
+        (Join-Path $AppDir 'web' 'server.js'),
+        (Join-Path $AppDir 'bin' 'magicclaw.ps1'),
+        (Join-Path $AppDir 'bin' 'magicclaw.cmd'),
+        (Join-Path $HomeDir 'run' 'api.pid'),
+        (Join-Path $HomeDir 'run' 'web.pid'),
+        (Join-Path $HomeDir 'run' 'api.log'),
+        (Join-Path $HomeDir 'run' 'web.log')
     )
 
     return @($paths | ForEach-Object { $_.TrimEnd('\') } | Where-Object { $_ })
+}
+
+function Test-CommandLineContainsPathFragment {
+    param(
+        [string]$CommandLine,
+        [string]$Fragment
+    )
+
+    if (-not $CommandLine -or -not $Fragment) {
+        return $false
+    }
+
+    $normalizedLine = $CommandLine.ToLowerInvariant().Replace('\', '/')
+    $normalizedFragment = $Fragment.ToLowerInvariant().Replace('\', '/').TrimEnd('/')
+    return $normalizedLine.Contains($normalizedFragment)
 }
 
 function Test-CommandLineReferencesMagicClawInstall {
@@ -122,14 +137,14 @@ function Test-CommandLineReferencesMagicClawInstall {
         return $false
     }
 
-    foreach ($needle in @($AppDir.TrimEnd('\'), $HomeDir.TrimEnd('\'))) {
-        if ($needle -and $CommandLine -like "*$needle*") {
+    foreach ($needle in @($AppDir.TrimEnd('\', '/'), $HomeDir.TrimEnd('\', '/'))) {
+        if (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $needle) {
             return $true
         }
     }
 
     foreach ($entryPath in (Get-MagicClawKnownEntryPaths -AppDir $AppDir -HomeDir $HomeDir)) {
-        if ($CommandLine -like "*$entryPath*") {
+        if (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $entryPath) {
             return $true
         }
     }
@@ -183,10 +198,11 @@ function Test-CommandLineReferencesLauncherForInstall {
         return $false
     }
 
-    $launcherPs1 = (Join-Path $AppDir 'bin\magicclaw.ps1').TrimEnd('\')
-    $launcherCmd = (Join-Path $AppDir 'bin\magicclaw.cmd').TrimEnd('\')
+    $launcherPs1 = Join-Path $AppDir 'bin' 'magicclaw.ps1'
+    $launcherCmd = Join-Path $AppDir 'bin' 'magicclaw.cmd'
 
-    return ($CommandLine -like "*$launcherPs1*") -or ($CommandLine -like "*$launcherCmd*")
+    return (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $launcherPs1) -or
+        (Test-CommandLineContainsPathFragment -CommandLine $CommandLine -Fragment $launcherCmd)
 }
 
 function Clear-ShellLocationUnderPath {
