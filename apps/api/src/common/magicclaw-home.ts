@@ -37,6 +37,10 @@ export function getMemoriesDir(userId: string): string {
   return join(getMagicClawHome(), "memories", sanitizePathSegment(userId));
 }
 
-function sanitizePathSegment(segment: string): string {
-  return segment.replace(/[^a-zA-Z0-9._:@-]/g, "_");
+/** Filesystem-safe directory name for scoped ids like web:uuid or telegram:123. */
+export function sanitizePathSegment(segment: string): string {
+  return segment
+    .replace(/:/g, "_")
+    .replace(/[^a-zA-Z0-9._@-]/g, "_")
+    .replace(/[. ]+$/g, "");
 }

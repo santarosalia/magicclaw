@@ -134,39 +134,59 @@ function Test-CommandLineReferencesMagicClawInstall {
         }
     }
 
-    return (Test-ProcessLikelyMagicClawNode -CommandLine $CommandLine)
+    return $false
 }
 
-function Test-ProcessLikelyMagicClawNode {
+function Get-ProtectedInstallProcessIds {
+    $protected = [System.Collections.Generic.HashSet[int]]::new()
+    $current = $PID
+
+    while ($current -gt 0) {
+        [void]$protected.Add($current)
+        $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$current" -ErrorAction SilentlyContinue).ParentProcessId
+        if ($parent -le 0 -or $parent -eq $current) {
+            break
+        }
+        $current = $parent
+    }
+
+    return $protected
+}
+
+function Test-ProcessShouldStopForInstall {
     param(
-        [string]$CommandLine
+        [int]$ProcessId,
+        [string]$AppDir,
+        [string]$HomeDir,
+        [System.Collections.Generic.HashSet[int]]$ProtectedIds,
+        [int]$PidFromFile = 0
     )
 
-    if (-not $CommandLine) {
+    if ($ProcessId -le 0) {
         return $false
     }
 
-    $lower = $CommandLine.ToLowerInvariant()
-    foreach ($marker in @(
-            'dist\main.js',
-            'dist/main.js',
-            'apps\web\server.js',
-            'apps/web/server.js',
-            'web\apps\web\server.js',
-            'web/apps/web/server.js',
-            'web\server.js',
-            'web/server.js',
-            '.magicclaw\app\',
-            '.magicclaw/app/',
-            'magicclaw.ps1',
-            'magicclaw.cmd'
-        )) {
-        if ($lower.Contains($marker)) {
-            return $true
-        }
+    if ($ProtectedIds -and $ProtectedIds.Contains($ProcessId)) {
+        return $false
     }
 
-    return $false
+    return Test-ProcessIsMagicClawManaged -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir -PidFromFile $PidFromFile
+}
+
+function Test-CommandLineReferencesLauncherForInstall {
+    param(
+        [string]$CommandLine,
+        [string]$AppDir
+    )
+
+    if (-not $CommandLine -or -not $AppDir) {
+        return $false
+    }
+
+    $launcherPs1 = (Join-Path $AppDir 'bin\magicclaw.ps1').TrimEnd('\')
+    $launcherCmd = (Join-Path $AppDir 'bin\magicclaw.cmd').TrimEnd('\')
+
+    return ($CommandLine -like "*$launcherPs1*") -or ($CommandLine -like "*$launcherCmd*")
 }
 
 function Clear-ShellLocationUnderPath {
@@ -190,12 +210,16 @@ function Stop-MagicClawPortListeners {
     param(
         [string]$HomeDir,
         [string]$AppDir,
-        [switch]$ForceConfiguredPorts,
+        [System.Collections.Generic.HashSet[int]]$ProtectedProcessIds,
         [scriptblock]$WriteStatus
     )
 
     if (-not $WriteStatus) {
         $WriteStatus = Get-DefaultServiceWriteStatus
+    }
+
+    if (-not $ProtectedProcessIds) {
+        $ProtectedProcessIds = Get-ProtectedInstallProcessIds
     }
 
     $ports = Get-MagicClawPortsFromEnvFile -HomeDir $HomeDir
@@ -208,9 +232,12 @@ function Stop-MagicClawPortListeners {
             continue
         }
 
-        if ($ForceConfiguredPorts -or (Test-ProcessIsMagicClawManaged -ProcessId $listenerPid -AppDir $AppDir -HomeDir $HomeDir)) {
+        if (Test-ProcessShouldStopForInstall -ProcessId $listenerPid -AppDir $AppDir -HomeDir $HomeDir -ProtectedIds $ProtectedProcessIds) {
             & $WriteStatus "Stopping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid)..."
             Stop-ProcessTreeGracefully -ProcessId $listenerPid
+        }
+        else {
+            & $WriteStatus "Skipping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid) — not owned by this MagicClaw install"
         }
     }
 }
@@ -219,11 +246,16 @@ function Stop-MagicClawNodeProcessesForInstall {
     param(
         [string]$AppDir,
         [string]$HomeDir,
+        [System.Collections.Generic.HashSet[int]]$ProtectedProcessIds,
         [scriptblock]$WriteStatus
     )
 
     if (-not $WriteStatus) {
         $WriteStatus = Get-DefaultServiceWriteStatus
+    }
+
+    if (-not $ProtectedProcessIds) {
+        $ProtectedProcessIds = Get-ProtectedInstallProcessIds
     }
 
     $processes = @(
@@ -237,30 +269,21 @@ function Stop-MagicClawNodeProcessesForInstall {
             continue
         }
 
-        if (Test-ProcessIsMagicClawManaged -ProcessId $processId -AppDir $AppDir -HomeDir $HomeDir) {
+        if (Test-ProcessShouldStopForInstall -ProcessId $processId -AppDir $AppDir -HomeDir $HomeDir -ProtectedIds $ProtectedProcessIds) {
             & $WriteStatus "Stopping MagicClaw node process (pid $processId)..."
-            Stop-ProcessTreeGracefully -ProcessId $processId
-            continue
-        }
-
-        $commandLine = $proc.CommandLine
-        if (-not $commandLine) {
-            continue
-        }
-
-        $matchesInstallPath = ($AppDir -and $commandLine -like "*$($AppDir.TrimEnd('\'))*") -or
-            ($HomeDir -and $commandLine -like "*$($HomeDir.TrimEnd('\'))*")
-        if ($matchesInstallPath) {
-            & $WriteStatus "Stopping node process under MagicClaw install (pid $processId)..."
             Stop-ProcessTreeGracefully -ProcessId $processId
         }
     }
 
     foreach ($proc in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.CommandLine -and ($_.CommandLine -like '*magicclaw.ps1*' -or $_.CommandLine -like '*magicclaw.cmd*')
+            $_.CommandLine -and (Test-CommandLineReferencesLauncherForInstall -CommandLine $_.CommandLine -AppDir $AppDir)
         })) {
         $processId = [int]$proc.ProcessId
         if ($processId -le 0) {
+            continue
+        }
+
+        if ($ProtectedProcessIds.Contains($processId)) {
             continue
         }
 
@@ -273,6 +296,7 @@ function Stop-MagicClawInstallFileLocks {
     param(
         [string]$AppDir,
         [string]$HomeDir,
+        [System.Collections.Generic.HashSet[int]]$ProtectedProcessIds,
         [scriptblock]$WriteStatus
     )
 
@@ -280,10 +304,14 @@ function Stop-MagicClawInstallFileLocks {
         $WriteStatus = Get-DefaultServiceWriteStatus
     }
 
+    if (-not $ProtectedProcessIds) {
+        $ProtectedProcessIds = Get-ProtectedInstallProcessIds
+    }
+
     Clear-ShellLocationUnderPath -TargetPath $AppDir
-    Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
-    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -ForceConfiguredPorts -WriteStatus $WriteStatus
-    Stop-MagicClawNodeProcessesForInstall -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+    Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -ProtectedProcessIds $ProtectedProcessIds -WriteStatus $WriteStatus
+    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -ProtectedProcessIds $ProtectedProcessIds -WriteStatus $WriteStatus
+    Stop-MagicClawNodeProcessesForInstall -AppDir $AppDir -HomeDir $HomeDir -ProtectedProcessIds $ProtectedProcessIds -WriteStatus $WriteStatus
     [void](Wait-ForMagicClawPortsFree -HomeDir $HomeDir -TimeoutSeconds 25)
     Start-Sleep -Milliseconds 800
 }
@@ -367,6 +395,7 @@ function Stop-MagicClawManagedProcess {
         [string]$AppDir,
         [string]$HomeDir,
         [int]$PidFromFile = 0,
+        [System.Collections.Generic.HashSet[int]]$ProtectedProcessIds,
         [scriptblock]$WriteStatus
     )
 
@@ -375,6 +404,11 @@ function Stop-MagicClawManagedProcess {
     }
 
     if ($ProcessId -le 0) {
+        return
+    }
+
+    if ($ProtectedProcessIds -and $ProtectedProcessIds.Contains($ProcessId)) {
+        & $WriteStatus "Skipping $Label (pid $ProcessId) — protected install session process"
         return
     }
 
@@ -391,6 +425,7 @@ function Stop-ProcessesFromPidFiles {
     param(
         [string]$HomeDir,
         [string]$AppDir,
+        [System.Collections.Generic.HashSet[int]]$ProtectedProcessIds,
         [scriptblock]$WriteStatus
     )
 
@@ -414,6 +449,7 @@ function Stop-ProcessesFromPidFiles {
             -AppDir $AppDir `
             -HomeDir $HomeDir `
             -PidFromFile $pidFromFile `
+            -ProtectedProcessIds $ProtectedProcessIds `
             -WriteStatus $WriteStatus
 
         Remove-Item -LiteralPath $entry.File -Force -ErrorAction SilentlyContinue
@@ -465,14 +501,16 @@ function Invoke-MagicClawServiceStop {
         }
     }
 
-    Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
+    $protectedProcessIds = Get-ProtectedInstallProcessIds
+
+    Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -ProtectedProcessIds $protectedProcessIds -WriteStatus $WriteStatus
 
     if ($Aggressive) {
-        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -ProtectedProcessIds $protectedProcessIds -WriteStatus $WriteStatus
         return
     }
 
-    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
+    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -ProtectedProcessIds $protectedProcessIds -WriteStatus $WriteStatus
     [void](Wait-ForMagicClawPortsFree -HomeDir $HomeDir)
 }
 
@@ -512,9 +550,11 @@ function Swap-InstallDirectory {
     $leaf = Split-Path $TargetDir -Leaf
     $backupPath = $null
 
+    $protectedProcessIds = $null
     if ($AppDir -and $HomeDir) {
+        $protectedProcessIds = Get-ProtectedInstallProcessIds
         Clear-ShellLocationUnderPath -TargetPath $TargetDir
-        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -ProtectedProcessIds $protectedProcessIds -WriteStatus $WriteStatus
     }
 
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
@@ -547,7 +587,10 @@ function Swap-InstallDirectory {
 
             & $WriteStatus "Install files are locked; stopping services and retrying ($attempt/$MaxAttempts)..."
             if ($AppDir -and $HomeDir) {
-                Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+                if (-not $protectedProcessIds) {
+                    $protectedProcessIds = Get-ProtectedInstallProcessIds
+                }
+                Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -ProtectedProcessIds $protectedProcessIds -WriteStatus $WriteStatus
             }
             elseif ($BeforeRetry) {
                 & $BeforeRetry

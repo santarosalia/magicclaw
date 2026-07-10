@@ -99,6 +99,15 @@ jobs:
             exit 1
           }
 
+      - name: Test installer service helpers
+        shell: pwsh
+        run: |
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0
+          $result = Invoke-Pester scripts/test/magicclaw-service.Tests.ps1 -PassThru -Output Detailed
+          if ($result.FailedCount -gt 0) {
+            exit 1
+          }
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
