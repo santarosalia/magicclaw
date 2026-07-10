@@ -397,6 +397,42 @@ function Follow-LogFiles {
     }
 }
 
+function Get-ProcessCommandLine {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return $null
+    }
+
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    if ($proc) {
+        return $proc.CommandLine
+    }
+
+    return $null
+}
+
+function Test-ProcessUsesMagicClawInstall {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return $false
+    }
+
+    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
+    if (-not $commandLine) {
+        return $false
+    }
+
+    foreach ($needle in @($AppRoot.TrimEnd('\'), $MagicClawHome.TrimEnd('\'))) {
+        if ($needle -and $commandLine -like "*$needle*") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Stop-PortListener {
     param(
         [int]$Port,
@@ -412,7 +448,11 @@ function Stop-PortListener {
         return
     }
 
-    Write-Warn "Port $Port already in use by pid $listenerPid — stopping $Name before restart"
+    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $listenerPid)) {
+        throw "Port $Port is already in use by pid $listenerPid (not a MagicClaw process). Stop that process or change the port in ~/.magicclaw/.env"
+    }
+
+    Write-Warn "Port $Port already in use by MagicClaw pid $listenerPid — stopping $Name before restart"
     Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
 }
@@ -565,6 +605,12 @@ function Stop-MagicClawProcess {
     }
 
     $processId = [int]((Get-Content -LiteralPath $PidFile -Raw).Trim())
+    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $processId)) {
+        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+        Write-Warn "$Name pid $processId is not owned by this MagicClaw install — removed stale pid file"
+        return
+    }
+
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($process) {
         Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
@@ -849,6 +895,46 @@ function Get-LatestReleaseTag {
     throw "Could not parse latest release redirect: $location"
 }
 
+function Remove-InstallTreeWithRetry {
+    param(
+        [string]$TargetPath,
+        [string]$Label,
+        [int]$MaxAttempts = 5
+    )
+
+    if (-not (Test-Path -LiteralPath $TargetPath)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw "Could not replace $Label at $TargetPath. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
+            }
+
+            Write-Warn "$Label files are locked; stopping MagicClaw services and retrying ($attempt/$MaxAttempts)..."
+            Invoke-Stop
+            try {
+                Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
+            }
+            catch {
+                Write-Warn $_.Exception.Message
+            }
+            try {
+                Stop-PortListener -Port $DefaultWebPort -Name 'Web'
+            }
+            catch {
+                Write-Warn $_.Exception.Message
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 function Invoke-Update {
     param([string]$Version)
 
@@ -863,7 +949,20 @@ function Invoke-Update {
     $url = "https://github.com/$GitHubRepo/releases/download/$Version/$asset"
 
     Write-Info "Updating MagicClaw to $Version (windows-x64)..."
-    try { Invoke-Stop } catch { }
+    Invoke-Stop
+    try {
+        Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
+    }
+    catch {
+        Write-Warn $_.Exception.Message
+    }
+    try {
+        Stop-PortListener -Port $DefaultWebPort -Name 'Web'
+    }
+    catch {
+        Write-Warn $_.Exception.Message
+    }
+    Start-Sleep -Milliseconds 750
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-update-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
@@ -883,9 +982,7 @@ function Invoke-Update {
 
         foreach ($name in @('api', 'web', 'share', 'bin', 'lib')) {
             $target = Join-Path $AppRoot $name
-            if (Test-Path -LiteralPath $target) {
-                Remove-Item -LiteralPath $target -Recurse -Force
-            }
+            Remove-InstallTreeWithRetry -TargetPath $target -Label $name
         }
 
         Copy-Item -LiteralPath (Join-Path $extractDir '*') -Destination $AppRoot -Recurse -Force
