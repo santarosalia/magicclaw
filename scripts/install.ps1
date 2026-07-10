@@ -324,25 +324,111 @@ function Test-ExistingMagicClawInstall {
     return $false
 }
 
-function Stop-ProcessIfOwnedByMagicClaw {
+function Stop-ProcessTree {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    & taskkill.exe /F /T /PID $ProcessId 2>$null | Out-Null
+    Start-Sleep -Milliseconds 400
+}
+
+function Read-PidFileValue {
+    param([string]$PidFile)
+
+    if (-not (Test-Path -LiteralPath $PidFile)) {
+        return 0
+    }
+
+    $pidText = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($pidText -match '^\d+$') {
+        return [int]$pidText
+    }
+
+    return 0
+}
+
+function Test-NodeLooksLikeMagicClawEntry {
+    param([string]$CommandLine)
+
+    if (-not $CommandLine) {
+        return $false
+    }
+
+    return $CommandLine -match 'dist[\\/]main\.js' `
+        -or $CommandLine -match 'apps[\\/]web[\\/]server\.js' `
+        -or $CommandLine -match '[\\/]magicclaw[\\/]app[\\/]'
+}
+
+function Test-ProcessIsMagicClawManaged {
+    param(
+        [int]$ProcessId,
+        [string]$AppDir,
+        [string]$HomeDir,
+        [int]$PidFromFile = 0,
+        [int]$ServicePort = 0
+    )
+
+    if ($ProcessId -le 0) {
+        return $false
+    }
+
+    if ($PidFromFile -gt 0 -and $PidFromFile -eq $ProcessId) {
+        return $true
+    }
+
+    if (Test-ProcessUsesMagicClawPaths -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir) {
+        return $true
+    }
+
+    if (Test-NodeLooksLikeMagicClawEntry -CommandLine (Get-ProcessCommandLine -ProcessId $ProcessId)) {
+        return $true
+    }
+
+    $parentId = (Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue).ParentProcessId
+    while ($parentId -gt 0) {
+        $parentLine = Get-ProcessCommandLine -ProcessId $parentId
+        foreach ($needle in @($AppDir.TrimEnd('\'), $HomeDir.TrimEnd('\'))) {
+            if ($needle -and $parentLine -like "*$needle*") {
+                return $true
+            }
+        }
+        $parentId = (Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue).ParentProcessId
+    }
+
+    if ($ServicePort -gt 0 -and (Test-ExistingMagicClawInstall -AppDir $AppDir -HomeDir $HomeDir)) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.Name -ieq 'node.exe' -and (Get-ListenerProcessIdOnPort -Port $ServicePort) -eq $ProcessId) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Stop-MagicClawManagedProcess {
     param(
         [int]$ProcessId,
         [string]$Label,
         [string]$AppDir,
-        [string]$HomeDir
+        [string]$HomeDir,
+        [int]$PidFromFile = 0,
+        [int]$ServicePort = 0
     )
 
     if ($ProcessId -le 0) {
         return
     }
 
-    if (-not (Test-ProcessUsesMagicClawPaths -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir)) {
+    if (-not (Test-ProcessIsMagicClawManaged -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir -PidFromFile $PidFromFile -ServicePort $ServicePort)) {
         Write-Host "Skipping $Label (pid $ProcessId) — not owned by this MagicClaw install" -ForegroundColor Yellow
         return
     }
 
     Write-Host "Stopping $Label (pid $ProcessId)..." -ForegroundColor Yellow
-    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    Stop-ProcessTree -ProcessId $ProcessId
 }
 
 function Stop-ProcessesUsingInstallPath {
@@ -358,7 +444,7 @@ function Stop-ProcessesUsingInstallPath {
             Where-Object { $_.CommandLine -and $_.CommandLine -like "*$needle*" } |
             ForEach-Object {
                 Write-Host "Stopping $($_.Name) pid $($_.ProcessId) using install files..." -ForegroundColor Yellow
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                Stop-ProcessTree -ProcessId $_.ProcessId
             }
     }
 }
@@ -386,65 +472,100 @@ function Stop-MagicClawServicesForInstall {
 
     $ports = Get-MagicClawPortsFromEnv -HomeDir $HomeDir
     $runDir = Join-Path $HomeDir 'run'
-    foreach ($entry in @(
-            @{ Name = 'API'; File = Join-Path $runDir 'api.pid' }
-            @{ Name = 'Web'; File = Join-Path $runDir 'web.pid' }
-        )) {
-        if (-not (Test-Path -LiteralPath $entry.File)) {
-            continue
-        }
+    $apiPidFile = Join-Path $runDir 'api.pid'
+    $webPidFile = Join-Path $runDir 'web.pid'
+    $savedPids = @{
+        API = Read-PidFileValue -PidFile $apiPidFile
+        Web = Read-PidFileValue -PidFile $webPidFile
+    }
 
-        $pidText = (Get-Content -LiteralPath $entry.File -Raw -ErrorAction SilentlyContinue).Trim()
-        if ($pidText -match '^\d+$') {
-            Stop-ProcessIfOwnedByMagicClaw `
-                -ProcessId ([int]$pidText) `
-                -Label $entry.Name `
+    foreach ($entry in @(
+            @{ Name = 'API'; File = $apiPidFile; Pid = $savedPids.API }
+            @{ Name = 'Web'; File = $webPidFile; Pid = $savedPids.Web }
+        )) {
+        if ($entry.Pid -gt 0) {
+            Stop-MagicClawManagedProcess `
+                -ProcessId $entry.Pid `
+                -Label "$($entry.Name) (pid file)" `
                 -AppDir $AppDir `
-                -HomeDir $HomeDir
+                -HomeDir $HomeDir `
+                -PidFromFile $entry.Pid
         }
 
         Remove-Item -LiteralPath $entry.File -Force -ErrorAction SilentlyContinue
     }
 
     foreach ($portEntry in @(
-            @{ Name = 'API'; Port = $ports.Api }
-            @{ Name = 'Web'; Port = $ports.Web }
+            @{ Name = 'API'; Port = $ports.Api; Pid = $savedPids.API }
+            @{ Name = 'Web'; Port = $ports.Web; Pid = $savedPids.Web }
         )) {
         $listenerPid = Get-ListenerProcessIdOnPort -Port $portEntry.Port
-        Stop-ProcessIfOwnedByMagicClaw `
+        Stop-MagicClawManagedProcess `
             -ProcessId $listenerPid `
             -Label "$($portEntry.Name) listener on port $($portEntry.Port)" `
             -AppDir $AppDir `
-            -HomeDir $HomeDir
+            -HomeDir $HomeDir `
+            -PidFromFile $portEntry.Pid `
+            -ServicePort $portEntry.Port
     }
 
     Stop-ProcessesUsingInstallPath -AppDir $AppDir
-    Start-Sleep -Milliseconds 750
+    Wait-ForMagicClawPortsFree -HomeDir $HomeDir
 }
 
-function Clear-InstallDirectoryContents {
+function Wait-ForMagicClawPortsFree {
     param(
-        [string]$TargetDir,
         [string]$HomeDir,
-        [string]$AppDir
+        [int]$TimeoutSeconds = 20
     )
 
-    if (-not (Test-Path -LiteralPath $TargetDir)) {
-        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-        return
-    }
+    $ports = Get-MagicClawPortsFromEnv -HomeDir $HomeDir
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
-    for ($attempt = 1; $attempt -le 5; $attempt++) {
+    while ((Get-Date) -lt $deadline) {
+        $apiBusy = (Get-ListenerProcessIdOnPort -Port $ports.Api) -gt 0
+        $webBusy = (Get-ListenerProcessIdOnPort -Port $ports.Web) -gt 0
+        if (-not $apiBusy -and -not $webBusy) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+function Swap-InstallDirectory {
+    param(
+        [string]$TargetDir,
+        [string]$SourceDir,
+        [string]$HomeDir,
+        [string]$AppDir,
+        [int]$MaxAttempts = 5
+    )
+
+    $parentDir = Split-Path $TargetDir -Parent
+    $leaf = Split-Path $TargetDir -Leaf
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
-            Get-ChildItem -LiteralPath $TargetDir -Force | Remove-Item -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $TargetDir) {
+                $backupName = "$leaf.old.$(Get-Date -Format 'yyyyMMddHHmmss')"
+                Rename-Item -LiteralPath $TargetDir -NewName $backupName -ErrorAction Stop
+                Move-Item -LiteralPath $SourceDir -Destination $TargetDir -ErrorAction Stop
+                $backupPath = Join-Path $parentDir $backupName
+                Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+                Move-Item -LiteralPath $SourceDir -Destination $TargetDir -ErrorAction Stop
+            }
+
             return
         }
         catch {
-            if ($attempt -ge 5) {
+            if ($attempt -ge $MaxAttempts) {
                 throw "Could not replace install files under $TargetDir. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
             }
 
-            Write-Host "Install files are locked; retrying ($attempt/5)..." -ForegroundColor Yellow
+            Write-Host "Install files are locked; stopping services and retrying ($attempt/$MaxAttempts)..." -ForegroundColor Yellow
             Stop-MagicClawServicesForInstall -HomeDir $HomeDir -AppDir $AppDir
             Start-Sleep -Seconds 2
         }
@@ -465,6 +586,8 @@ function Install-ReleaseBundle {
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-install-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
+    $parentDir = Split-Path $Dir -Parent
+    $stagingDir = Join-Path $parentDir ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
         try {
@@ -476,17 +599,27 @@ function Install-ReleaseBundle {
 
         Write-Host "Installing to $Dir..." -ForegroundColor Blue
 
-        Stop-MagicClawServicesForInstall -HomeDir $MagicClawHome -AppDir $Dir
-        Clear-InstallDirectoryContents -TargetDir $Dir -HomeDir $MagicClawHome -AppDir $Dir
-
-        & tar -xzf $archive -C $Dir
+        New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+        & tar -xzf $archive -C $stagingDir
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to extract $asset"
         }
+
+        $extractDir = $stagingDir
+        $nested = Join-Path $stagingDir 'magicclaw'
+        if (Test-Path -LiteralPath $nested) {
+            $extractDir = $nested
+        }
+
+        Stop-MagicClawServicesForInstall -HomeDir $MagicClawHome -AppDir $Dir
+        Swap-InstallDirectory -TargetDir $Dir -SourceDir $extractDir -HomeDir $MagicClawHome -AppDir $Dir
     }
     finally {
         if ($tmpdir -and (Test-Path $tmpdir.FullName)) {
             Remove-Item -LiteralPath $tmpdir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stagingDir) {
+            Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

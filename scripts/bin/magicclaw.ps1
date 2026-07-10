@@ -412,20 +412,112 @@ function Get-ProcessCommandLine {
     return $null
 }
 
-function Test-ProcessUsesMagicClawInstall {
+function Resolve-LaunchArguments {
+    param(
+        [string]$WorkingDirectory,
+        [string[]]$ArgumentList
+    )
+
+    $resolved = @()
+    foreach ($arg in $ArgumentList) {
+        if ([string]::IsNullOrWhiteSpace($arg)) {
+            continue
+        }
+
+        if ($arg.StartsWith('-')) {
+            $resolved += $arg
+            continue
+        }
+
+        if ([IO.Path]::IsPathRooted($arg)) {
+            $resolved += $arg
+        }
+        else {
+            $resolved += (Join-Path $WorkingDirectory $arg)
+        }
+    }
+
+    return $resolved
+}
+
+function Stop-ProcessTree {
     param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    & taskkill.exe /F /T /PID $ProcessId 2>$null | Out-Null
+    Start-Sleep -Milliseconds 400
+}
+
+function Read-PidFileValue {
+    param([string]$PidFile)
+
+    if (-not (Test-Path -LiteralPath $PidFile)) {
+        return 0
+    }
+
+    $pidText = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($pidText -match '^\d+$') {
+        return [int]$pidText
+    }
+
+    return 0
+}
+
+function Test-NodeLooksLikeMagicClawEntry {
+    param([string]$CommandLine)
+
+    if (-not $CommandLine) {
+        return $false
+    }
+
+    return $CommandLine -match 'dist[\\/]main\.js' `
+        -or $CommandLine -match 'apps[\\/]web[\\/]server\.js' `
+        -or $CommandLine -match '[\\/]magicclaw[\\/]app[\\/]'
+}
+
+function Test-ProcessUsesMagicClawInstall {
+    param(
+        [int]$ProcessId,
+        [int]$PidFromFile = 0,
+        [int]$ServicePort = 0
+    )
 
     if ($ProcessId -le 0) {
         return $false
     }
 
-    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
-    if (-not $commandLine) {
-        return $false
+    if ($PidFromFile -gt 0 -and $PidFromFile -eq $ProcessId) {
+        return $true
     }
 
+    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
     foreach ($needle in @($AppRoot.TrimEnd('\'), $MagicClawHome.TrimEnd('\'))) {
         if ($needle -and $commandLine -like "*$needle*") {
+            return $true
+        }
+    }
+
+    if (Test-NodeLooksLikeMagicClawEntry -CommandLine $commandLine) {
+        return $true
+    }
+
+    $parentId = (Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue).ParentProcessId
+    while ($parentId -gt 0) {
+        $parentLine = Get-ProcessCommandLine -ProcessId $parentId
+        foreach ($needle in @($AppRoot.TrimEnd('\'), $MagicClawHome.TrimEnd('\'))) {
+            if ($needle -and $parentLine -like "*$needle*") {
+                return $true
+            }
+        }
+        $parentId = (Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue).ParentProcessId
+    }
+
+    if ($ServicePort -gt 0) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.Name -ieq 'node.exe' -and (Get-ListenerProcessId -Port $ServicePort) -eq $ProcessId) {
             return $true
         }
     }
@@ -448,13 +540,15 @@ function Stop-PortListener {
         return
     }
 
-    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $listenerPid)) {
+    $pidFile = if ($Name -eq 'API') { $ApiPidFile } else { $WebPidFile }
+    $pidFromFile = Read-PidFileValue -PidFile $pidFile
+
+    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $listenerPid -PidFromFile $pidFromFile -ServicePort $Port)) {
         throw "Port $Port is already in use by pid $listenerPid (not a MagicClaw process). Stop that process or change the port in ~/.magicclaw/.env"
     }
 
     Write-Warn "Port $Port already in use by MagicClaw pid $listenerPid — stopping $Name before restart"
-    Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    Stop-ProcessTree -ProcessId $listenerPid
 }
 
 function Get-ListenerProcessId {
@@ -536,10 +630,12 @@ function Start-MagicClawProcess {
 
     Sync-RuntimeEnvironment -Extra $Environment
 
+    $launchArgs = Resolve-LaunchArguments -WorkingDirectory $WorkingDirectory -ArgumentList $ArgumentList
+
     try {
         # Append redirect via cmd keeps logs readable while `magicclaw logs` is open
         # and avoids exclusive file locks from Start-Process -RedirectStandardOutput.
-        $argString = Format-ProcessArguments -ArgumentList $ArgumentList
+        $argString = Format-ProcessArguments -ArgumentList $launchArgs
         $launch = "cd /d `"$WorkingDirectory`" && `"$NodeBin`" $argString 1>>`"$LogFile`" 2>>`"$errorLog`""
         $process = Start-Process -FilePath 'cmd.exe' `
             -ArgumentList @('/c', $launch) `
@@ -605,29 +701,79 @@ function Stop-MagicClawProcess {
     }
 
     $processId = [int]((Get-Content -LiteralPath $PidFile -Raw).Trim())
-    if (-not (Test-ProcessUsesMagicClawInstall -ProcessId $processId)) {
-        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-        Write-Warn "$Name pid $processId is not owned by this MagicClaw install — removed stale pid file"
-        return
-    }
-
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($process) {
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-        $process.WaitForExit(5000) | Out-Null
-    }
-
-    try {
-        Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId" -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-    }
-    catch {
-    }
+    Stop-ProcessTree -ProcessId $processId
 
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     Write-Ok "$Name stopped"
+}
+
+function Stop-AllMagicClawServices {
+    Invoke-Stop
+
+    $apiPid = Read-PidFileValue -PidFile $ApiPidFile
+    $webPid = Read-PidFileValue -PidFile $WebPidFile
+
+    foreach ($entry in @(
+            @{ Name = 'API'; Port = [int]$env:PORT; Pid = $apiPid }
+            @{ Name = 'Web'; Port = $DefaultWebPort; Pid = $webPid }
+        )) {
+        $listenerPid = Get-ListenerProcessId -Port $entry.Port
+        if ($listenerPid -le 0) {
+            continue
+        }
+
+        if (Test-ProcessUsesMagicClawInstall -ProcessId $listenerPid -PidFromFile $entry.Pid -ServicePort $entry.Port) {
+            Write-Warn "Stopping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid)..."
+            Stop-ProcessTree -ProcessId $listenerPid
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        $apiBusy = (Get-ListenerProcessId -Port ([int]$env:PORT)) -gt 0
+        $webBusy = (Get-ListenerProcessId -Port $DefaultWebPort) -gt 0
+        if (-not $apiBusy -and -not $webBusy) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+function Swap-AppInstallDirectory {
+    param(
+        [string]$SourceDir,
+        [int]$MaxAttempts = 5
+    )
+
+    $parentDir = Split-Path $AppRoot -Parent
+    $leaf = Split-Path $AppRoot -Leaf
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $AppRoot) {
+                $backupName = "$leaf.old.$(Get-Date -Format 'yyyyMMddHHmmss')"
+                $backupPath = Join-Path $parentDir $backupName
+                Rename-Item -LiteralPath $AppRoot -NewName $backupName -ErrorAction Stop
+                Move-Item -LiteralPath $SourceDir -Destination $AppRoot -ErrorAction Stop
+                Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+                Move-Item -LiteralPath $SourceDir -Destination $AppRoot -ErrorAction Stop
+            }
+
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw "Could not replace install files under $AppRoot. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
+            }
+
+            Write-Warn "Install files are locked; stopping services and retrying ($attempt/$MaxAttempts)..."
+            Stop-AllMagicClawServices
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 function Invoke-Start {
@@ -646,9 +792,6 @@ function Invoke-Start {
     if (-not (Test-Path -LiteralPath $webEntry)) {
         $webEntry = $webServer
     }
-    else {
-        $webEntry = 'apps/web/server.js'
-    }
 
     $apiPort = [int]$env:PORT
 
@@ -656,7 +799,7 @@ function Invoke-Start {
     Start-MagicClawProcess -Name 'API' `
         -NodeBin $node `
         -WorkingDirectory $apiDir `
-        -ArgumentList @('dist/main.js') `
+        -ArgumentList @((Join-Path $apiDir 'dist\main.js')) `
         -PidFile $ApiPidFile `
         -LogFile $ApiLog `
         -ListenPort $apiPort `
@@ -895,46 +1038,6 @@ function Get-LatestReleaseTag {
     throw "Could not parse latest release redirect: $location"
 }
 
-function Remove-InstallTreeWithRetry {
-    param(
-        [string]$TargetPath,
-        [string]$Label,
-        [int]$MaxAttempts = 5
-    )
-
-    if (-not (Test-Path -LiteralPath $TargetPath)) {
-        return
-    }
-
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        try {
-            Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction Stop
-            return
-        }
-        catch {
-            if ($attempt -ge $MaxAttempts) {
-                throw "Could not replace $Label at $TargetPath. Run 'magicclaw stop' and retry.`n$($_.Exception.Message)"
-            }
-
-            Write-Warn "$Label files are locked; stopping MagicClaw services and retrying ($attempt/$MaxAttempts)..."
-            Invoke-Stop
-            try {
-                Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
-            }
-            catch {
-                Write-Warn $_.Exception.Message
-            }
-            try {
-                Stop-PortListener -Port $DefaultWebPort -Name 'Web'
-            }
-            catch {
-                Write-Warn $_.Exception.Message
-            }
-            Start-Sleep -Seconds 2
-        }
-    }
-}
-
 function Invoke-Update {
     param([string]$Version)
 
@@ -949,49 +1052,36 @@ function Invoke-Update {
     $url = "https://github.com/$GitHubRepo/releases/download/$Version/$asset"
 
     Write-Info "Updating MagicClaw to $Version (windows-x64)..."
-    Invoke-Stop
-    try {
-        Stop-PortListener -Port ([int]$env:PORT) -Name 'API'
-    }
-    catch {
-        Write-Warn $_.Exception.Message
-    }
-    try {
-        Stop-PortListener -Port $DefaultWebPort -Name 'Web'
-    }
-    catch {
-        Write-Warn $_.Exception.Message
-    }
-    Start-Sleep -Milliseconds 750
 
     $tmpdir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("magicclaw-update-" + [guid]::NewGuid().ToString('n')))
     $archive = Join-Path $tmpdir.FullName 'bundle.tar.gz'
+    $stagingDir = Join-Path (Split-Path $AppRoot -Parent) ("app.staging-" + [guid]::NewGuid().ToString('n'))
 
     try {
         Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
-        & tar -xzf $archive -C $tmpdir.FullName
+        New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+        & tar -xzf $archive -C $stagingDir
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to extract $asset"
         }
 
-        $extractDir = $tmpdir.FullName
-        $nested = Join-Path $tmpdir.FullName 'magicclaw'
+        $extractDir = $stagingDir
+        $nested = Join-Path $stagingDir 'magicclaw'
         if (Test-Path -LiteralPath $nested) {
             $extractDir = $nested
         }
 
-        foreach ($name in @('api', 'web', 'share', 'bin', 'lib')) {
-            $target = Join-Path $AppRoot $name
-            Remove-InstallTreeWithRetry -TargetPath $target -Label $name
-        }
-
-        Copy-Item -LiteralPath (Join-Path $extractDir '*') -Destination $AppRoot -Recurse -Force
+        Stop-AllMagicClawServices
+        Swap-AppInstallDirectory -SourceDir $extractDir
         Write-Ok "Updated to $Version"
         Write-Info 'Run: magicclaw start'
     }
     finally {
         if (Test-Path -LiteralPath $tmpdir.FullName) {
             Remove-Item -LiteralPath $tmpdir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stagingDir) {
+            Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
