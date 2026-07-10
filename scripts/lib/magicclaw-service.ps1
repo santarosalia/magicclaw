@@ -237,7 +237,7 @@ function Stop-ProcessesFromPidFiles {
 
     $runDir = Join-Path $HomeDir 'run'
     foreach ($entry in @(
-            @{ Name = 'API'; File = Join-Path $runDir 'api.pid' }
+            @{ Name = 'API'; File = Join-Path $runDir 'api.pid' },
             @{ Name = 'Web'; File = Join-Path $runDir 'web.pid' }
         )) {
         $pidFromFile = Read-PidFileValue -PidFile $entry.File
