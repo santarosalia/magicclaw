@@ -322,6 +322,34 @@ function Get-ErrorLogPath {
     return "$LogFile.err"
 }
 
+function Format-CmdQuotedPath {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return '""'
+    }
+
+    return '"' + ($Path -replace '"', '""') + '"'
+}
+
+function Build-CmdLaunchLine {
+    param(
+        [string]$WorkingDirectory,
+        [string]$NodeBin,
+        [string]$ArgString,
+        [string]$LogFile,
+        [string]$ErrorLog
+    )
+
+    return (
+        'cd /d ' + (Format-CmdQuotedPath $WorkingDirectory) +
+        ' && ' + (Format-CmdQuotedPath $NodeBin) +
+        ' ' + $ArgString +
+        ' 1>>' + (Format-CmdQuotedPath $LogFile) +
+        ' 2>>' + (Format-CmdQuotedPath $ErrorLog)
+    )
+}
+
 function Format-ProcessArguments {
     param([string[]]$ArgumentList)
 
@@ -357,8 +385,8 @@ function Write-LogSessionMarker {
             New-Item -ItemType File -Force -Path $path | Out-Null
         }
 
-        # Use cmd append — works while `magicclaw logs` is reading the same file.
-        $cmd = "echo.>>`"$path`" & echo $marker>>`"$path`""
+        # Use cmd append - works while magicclaw logs is reading the same file.
+        $cmd = 'echo.>>' + (Format-CmdQuotedPath $path) + ' & echo ' + $marker + '>>' + (Format-CmdQuotedPath $path)
         cmd.exe /d /c $cmd 1>$null 2>$null
     }
 }
@@ -472,7 +500,7 @@ function Stop-PortListener {
         throw "Port $Port is already in use by pid $listenerPid (not a MagicClaw process). Stop that process or change the port in ~/.magicclaw/.env"
     }
 
-    Write-Warn "Port $Port already in use by MagicClaw pid $listenerPid — stopping $Name before restart"
+    Write-Warn "Port $Port already in use by MagicClaw pid $listenerPid - stopping $Name before restart"
     Stop-ProcessTreeGracefully -ProcessId $listenerPid
 }
 
@@ -530,7 +558,12 @@ function Start-MagicClawProcess {
         # Append redirect via cmd keeps logs readable while `magicclaw logs` is open
         # and avoids exclusive file locks from Start-Process -RedirectStandardOutput.
         $argString = Format-ProcessArguments -ArgumentList $launchArgs
-        $launch = "cd /d `"$WorkingDirectory`" && `"$NodeBin`" $argString 1>>`"$LogFile`" 2>>`"$errorLog`""
+        $launch = Build-CmdLaunchLine `
+            -WorkingDirectory $WorkingDirectory `
+            -NodeBin $NodeBin `
+            -ArgString $argString `
+            -LogFile $LogFile `
+            -ErrorLog $errorLog
         $process = Start-Process -FilePath 'cmd.exe' `
             -ArgumentList @('/c', $launch) `
             -PassThru `
@@ -551,7 +584,8 @@ function Start-MagicClawProcess {
             }
             $logLines = Read-ProcessLogs -LogFile $LogFile
             $details = if ($logLines.Count -gt 0) { "`n$($logLines -join "`n")" } else { '' }
-            throw "$Name failed to start (exit $($process.ExitCode)).$details"
+            $message = "$Name failed to start (exit $($process.ExitCode))"
+            throw ($message + $details)
         }
 
         $processId = $process.Id
@@ -561,7 +595,7 @@ function Start-MagicClawProcess {
                 $processId = $listenerPid
             }
             else {
-                Write-Warn "$Name is healthy but listener pid on port $ListenPort was not found; using wrapper pid $($process.Id)"
+                Write-Warn "$Name is healthy but listener pid on port $ListenPort was not found; wrapper pid $($process.Id) will be used"
             }
         }
 
@@ -687,7 +721,7 @@ function Show-StoppedLogHints {
 
     $logLines = Read-ProcessLogs -LogFile $LogFile -Tail 8
     if ($logLines.Count -eq 0) {
-        Write-Warn "  $Name log: $LogFile (empty — run: magicclaw start)"
+        Write-Warn "  $Name log: $LogFile (empty - run: magicclaw start)"
         return
     }
 
@@ -740,7 +774,7 @@ function Invoke-Logs {
 
     Initialize-Env
     New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
-    Write-Info 'Following logs (Ctrl+C to stop — servers keep running)'
+    Write-Info 'Following logs (Ctrl+C to stop - servers keep running)'
 
     $paths = @()
     switch ($Target) {
@@ -813,7 +847,7 @@ OPENAI_API_KEY=
     $content = Get-Content -LiteralPath $envFile -Raw
     if ($content -notmatch '(?m)^OPENAI_API_KEY=.+') {
         if ([Console]::IsInputRedirected) {
-            Write-Warn "OPENAI_API_KEY not set — edit $envFile before chatting"
+            Write-Warn "OPENAI_API_KEY not set - edit $envFile before chatting"
         }
         else {
             $key = Read-Host 'Enter OPENAI_API_KEY (required for chat)'
@@ -828,7 +862,7 @@ OPENAI_API_KEY=
                 Write-Ok 'OPENAI_API_KEY saved'
             }
             else {
-                Write-Warn "OPENAI_API_KEY not set — edit $envFile before chatting"
+                Write-Warn "OPENAI_API_KEY not set - edit $envFile before chatting"
             }
         }
     }
@@ -896,7 +930,7 @@ function Invoke-Update {
 
 function Show-Help {
     @"
-MagicClaw — AI agent with MCP server management
+MagicClaw - AI agent with MCP server management
 
 Usage: magicclaw <command> [options]
 

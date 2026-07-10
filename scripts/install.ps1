@@ -173,7 +173,7 @@ Environment (for piped install):
   MAGICCLAW_SKIP_SETUP=1
   MAGICCLAW_NON_INTERACTIVE=1
   MAGICCLAW_GITHUB_REPO
-  GITHUB_TOKEN            Optional — raises GitHub API rate limits
+  GITHUB_TOKEN            Optional - raises GitHub API rate limits
 "@
 }
 
@@ -422,7 +422,7 @@ try {
     Write-Banner
     Test-Prerequisites
 
-    # Dot-source lib at script scope — piped iex loses functions loaded inside nested functions.
+    # Dot-source lib at script scope - piped iex loses functions loaded inside nested functions.
     $skipLocalLibSearch = $NonInteractive
     $installSearchRoots = if ($skipLocalLibSearch) { @() } else { Get-InstallScriptSearchRoots }
 

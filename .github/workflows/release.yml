@@ -107,6 +107,14 @@ jobs:
             exit 1
           }
 
+          $unicodeTraps = @(
+            Select-String -Path scripts/lib/*.ps1, scripts/bin/*.ps1, scripts/install.ps1, dist/installer-assets/*.ps1 -Pattern '[\u2014\u2013]' -ErrorAction SilentlyContinue
+          ) | Where-Object { $_ }
+          if ($unicodeTraps.Count -gt 0) {
+            $unicodeTraps | ForEach-Object { Write-Error "Replace Unicode dash with ASCII hyphen at $($_.Path):$($_.LineNumber)" }
+            exit 1
+          }
+
       - name: Test installer service helpers
         shell: pwsh
         run: |
