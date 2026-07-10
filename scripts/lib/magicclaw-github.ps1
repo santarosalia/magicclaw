@@ -1,5 +1,36 @@
 # GitHub release resolution for MagicClaw installers/launchers.
-# Dot-source this file; does not run standalone.
+# Dot-source this file; do not run standalone.
+
+function Get-MagicClawGitHubRequestHeaders {
+    $headers = @{
+        Accept       = 'application/vnd.github+json'
+        'User-Agent' = 'magicclaw-installer'
+    }
+
+    if ($env:GITHUB_TOKEN) {
+        $headers.Authorization = "Bearer $env:GITHUB_TOKEN"
+    }
+
+    return $headers
+}
+
+function Get-MagicClawReleaseAssetUrlCandidates {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubRepo,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ReleaseTag,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FileName
+    )
+
+    return @(
+        "https://github.com/$GitHubRepo/releases/download/$ReleaseTag/$FileName",
+        "https://raw.githubusercontent.com/$GitHubRepo/$ReleaseTag/scripts/lib/$FileName"
+    )
+}
 
 function Import-MagicClawPowerShellModule {
     param(
@@ -20,16 +51,14 @@ function Import-MagicClawPowerShellModule {
             continue
         }
 
-        $candidate = Join-Path $root $fileName
-        if (Test-Path -LiteralPath $candidate) {
-            . $candidate
-            return
-        }
-
-        $candidate = Join-Path (Join-Path $root 'lib') $fileName
-        if (Test-Path -LiteralPath $candidate) {
-            . $candidate
-            return
+        foreach ($candidate in @(
+                (Join-Path $root $fileName),
+                (Join-Path (Join-Path $root 'lib') $fileName)
+            )) {
+            if (Test-Path -LiteralPath $candidate) {
+                . $candidate
+                return
+            }
         }
     }
 
@@ -38,14 +67,22 @@ function Import-MagicClawPowerShellModule {
     }
 
     $tmp = Join-Path $env:TEMP ("magicclaw-$ModuleName-" + [guid]::NewGuid().ToString('n') + '.ps1')
-    $url = "https://github.com/$GitHubRepo/releases/download/$ReleaseTag/$fileName"
+    $errors = @()
+    $urls = Get-MagicClawReleaseAssetUrlCandidates -GitHubRepo $GitHubRepo -ReleaseTag $ReleaseTag -FileName $fileName
 
     try {
-        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
-        . $tmp
-    }
-    catch {
-        throw "Could not download $fileName from $url`n$($_.Exception.Message)"
+        foreach ($url in $urls) {
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+                . $tmp
+                return
+            }
+            catch {
+                $errors += "$url -> $($_.Exception.Message)"
+            }
+        }
+
+        throw "Could not download $fileName for $ReleaseTag.`n$($errors -join [Environment]::NewLine)"
     }
     finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -59,34 +96,41 @@ function Get-MagicClawLatestReleaseTagFromRedirect {
     )
 
     $uri = "https://github.com/$GitHubRepo/releases/latest"
-    $location = $null
 
-    try {
-        $request = [System.Net.HttpWebRequest]::Create($uri)
-        $request.Method = 'HEAD'
-        $request.AllowAutoRedirect = $false
-        $request.UserAgent = 'magicclaw-installer'
-        $response = $request.GetResponse()
-        $location = $response.Headers['Location']
-        if (-not $location -and $response.ResponseUri) {
-            $location = $response.ResponseUri.AbsoluteUri
+    foreach ($method in @('HEAD', 'GET')) {
+        $location = $null
+
+        try {
+            $request = [System.Net.HttpWebRequest]::Create($uri)
+            $request.Method = $method
+            $request.AllowAutoRedirect = $false
+            $request.UserAgent = 'magicclaw-installer'
+            if ($env:GITHUB_TOKEN) {
+                $request.Headers.Add('Authorization', "Bearer $env:GITHUB_TOKEN")
+            }
+
+            $response = $request.GetResponse()
+            $location = $response.Headers['Location']
+            if (-not $location -and $response.ResponseUri) {
+                $location = $response.ResponseUri.AbsoluteUri
+            }
+            $response.Close()
         }
-        $response.Close()
-    }
-    catch {
-        $webResponse = $_.Exception.Response
-        if ($webResponse) {
-            $location = $webResponse.Headers['Location']
-            $webResponse.Close()
+        catch {
+            $webResponse = $_.Exception.Response
+            if ($webResponse) {
+                $location = $webResponse.Headers['Location']
+                $webResponse.Close()
+            }
         }
-    }
 
-    if ($location -is [array]) {
-        $location = $location[0]
-    }
+        if ($location -is [array]) {
+            $location = $location[0]
+        }
 
-    if ($location -and $location -match '/releases/tag/([^/?#]+)') {
-        return [Uri]::UnescapeDataString($Matches[1])
+        if ($location -and $location -match '/releases/tag/([^/?#]+)') {
+            return [Uri]::UnescapeDataString($Matches[1])
+        }
     }
 
     return $null
@@ -104,32 +148,24 @@ function Get-MagicClawLatestReleaseTag {
         return $Version
     }
 
-    $apiUrl = "https://api.github.com/repos/$GitHubRepo/releases/latest"
-    $headers = @{
-        Accept       = 'application/vnd.github+json'
-        'User-Agent' = 'magicclaw-installer'
+    $tag = Get-MagicClawLatestReleaseTagFromRedirect -GitHubRepo $GitHubRepo
+    if ($tag) {
+        return $tag
     }
 
-    if ($env:GITHUB_TOKEN) {
-        $headers.Authorization = "Bearer $env:GITHUB_TOKEN"
-    }
+    $apiUrl = "https://api.github.com/repos/$GitHubRepo/releases/latest"
+    $headers = Get-MagicClawGitHubRequestHeaders
 
     try {
         $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get -ErrorAction Stop
     }
     catch {
-        $tag = Get-MagicClawLatestReleaseTagFromRedirect -GitHubRepo $GitHubRepo
-        if ($tag) {
-            return $tag
-        }
-
-        throw "Could not resolve latest release via GitHub API or redirect. Specify -Version vX.Y.Z or set GITHUB_TOKEN.`n$($_.Exception.Message)"
+        throw "Could not resolve latest release via redirect or GitHub API. Specify -Version vX.Y.Z or set GITHUB_TOKEN.`n$($_.Exception.Message)"
     }
 
-    $tag = $response.tag_name
-    if (-not $tag) {
+    if (-not $response.tag_name) {
         throw 'Could not resolve latest release: GitHub API response did not include tag_name.'
     }
 
-    return $tag
+    return $response.tag_name
 }

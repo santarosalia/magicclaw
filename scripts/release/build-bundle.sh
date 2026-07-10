@@ -33,6 +33,43 @@ echo "==> Staging bundle"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/bin" "$STAGING/lib" "$STAGING/api" "$STAGING/web" "$STAGING/share"
 
+if [[ "$PLATFORM" == windows-* ]]; then
+  tmp_validate="$(mktemp -d)"
+  ps_source_validate="$tmp_validate/validate-source-powershell.ps1"
+  cat >"$ps_source_validate" <<'PS1'
+$root = $env:MAGICCLAW_PS_VALIDATE_ROOT
+$errors = @()
+
+Get-ChildItem -LiteralPath $root -Recurse -Filter '*.ps1' | ForEach-Object {
+  $tokens = $null
+  $parseErrors = $null
+  [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+  foreach ($err in $parseErrors) {
+    $errors += "$($_.FullName): $($err.Extent.StartLineNumber):$($err.Extent.StartColumnNumber) $($err.Message)"
+  }
+}
+
+if ($errors.Count -gt 0) {
+  $errors | ForEach-Object { Write-Error $_ }
+  exit 1
+}
+PS1
+  if command -v pwsh >/dev/null 2>&1; then
+    if ! MAGICCLAW_PS_VALIDATE_ROOT="$ROOT/scripts" pwsh -NoProfile -ExecutionPolicy Bypass -File "$ps_source_validate"; then
+      echo "Error: PowerShell parse validation failed in scripts/" >&2
+      rm -rf "$tmp_validate"
+      exit 1
+    fi
+  elif command -v powershell >/dev/null 2>&1; then
+    if ! MAGICCLAW_PS_VALIDATE_ROOT="$ROOT/scripts" powershell -NoProfile -ExecutionPolicy Bypass -File "$ps_source_validate"; then
+      echo "Error: PowerShell parse validation failed in scripts/" >&2
+      rm -rf "$tmp_validate"
+      exit 1
+    fi
+  fi
+  rm -rf "$tmp_validate"
+fi
+
 cp scripts/bin/magicclaw "$STAGING/bin/magicclaw"
 chmod +x "$STAGING/bin/magicclaw" 2>/dev/null || true
 cp scripts/lib/detect-platform.sh "$STAGING/lib/detect-platform.sh"

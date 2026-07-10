@@ -79,14 +79,34 @@ jobs:
       - name: List artifacts
         run: ls -la dist/release/
 
+      - name: Prepare installer assets
+        run: bash scripts/release/prepare-installer-assets.sh
+
+      - name: Validate installer PowerShell scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem -Path scripts, dist/installer-assets -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            foreach ($err in $parseErrors) {
+              $errors += "$($_.FullName):$($err.Extent.StartLineNumber):$($err.Extent.StartColumnNumber) $($err.Message)"
+            }
+          }
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/release/magicclaw-*.tar.gz
             dist/release/magicclaw-*.sha256
-            scripts/install.sh
-            scripts/install.ps1
-            scripts/lib/magicclaw-github.ps1
-            scripts/lib/magicclaw-service.ps1
+            dist/installer-assets/install.sh
+            dist/installer-assets/install.ps1
+            dist/installer-assets/magicclaw-github.ps1
+            dist/installer-assets/magicclaw-service.ps1
           generate_release_notes: true
