@@ -255,6 +255,96 @@ function Get-ListenerProcessIdOnPort {
     return 0
 }
 
+function Get-ProcessCommandLine {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return $null
+    }
+
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    if ($proc) {
+        return $proc.CommandLine
+    }
+
+    return $null
+}
+
+function Test-ProcessUsesMagicClawPaths {
+    param(
+        [int]$ProcessId,
+        [string]$AppDir,
+        [string]$HomeDir
+    )
+
+    if ($ProcessId -le 0) {
+        return $false
+    }
+
+    $commandLine = Get-ProcessCommandLine -ProcessId $ProcessId
+    if (-not $commandLine) {
+        return $false
+    }
+
+    $needles = @(
+        $AppDir.TrimEnd('\')
+        $HomeDir.TrimEnd('\')
+    ) | Where-Object { $_ }
+
+    foreach ($needle in $needles) {
+        if ($commandLine -like "*$needle*") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-ExistingMagicClawInstall {
+    param(
+        [string]$AppDir,
+        [string]$HomeDir
+    )
+
+    if (Test-Path -LiteralPath (Join-Path $AppDir 'bin\magicclaw.ps1')) {
+        return $true
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $AppDir 'VERSION')) {
+        return $true
+    }
+
+    $runDir = Join-Path $HomeDir 'run'
+    foreach ($name in @('api.pid', 'web.pid')) {
+        if (Test-Path -LiteralPath (Join-Path $runDir $name)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Stop-ProcessIfOwnedByMagicClaw {
+    param(
+        [int]$ProcessId,
+        [string]$Label,
+        [string]$AppDir,
+        [string]$HomeDir
+    )
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    if (-not (Test-ProcessUsesMagicClawPaths -ProcessId $ProcessId -AppDir $AppDir -HomeDir $HomeDir)) {
+        Write-Host "Skipping $Label (pid $ProcessId) — not owned by this MagicClaw install" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Stopping $Label (pid $ProcessId)..." -ForegroundColor Yellow
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
 function Stop-ProcessesUsingInstallPath {
     param([string]$AppDir)
 
@@ -279,6 +369,10 @@ function Stop-MagicClawServicesForInstall {
         [string]$AppDir
     )
 
+    if (-not (Test-ExistingMagicClawInstall -AppDir $AppDir -HomeDir $HomeDir)) {
+        return
+    }
+
     $launcher = Join-Path $AppDir 'bin\magicclaw.ps1'
     if (Test-Path -LiteralPath $launcher) {
         try {
@@ -286,7 +380,7 @@ function Stop-MagicClawServicesForInstall {
             Invoke-MagicClawLauncher -AppInstallDir $AppDir stop | Out-Null
         }
         catch {
-            # Fall back to pid/port cleanup below.
+            # Fall back to scoped pid/port cleanup below.
         }
     }
 
@@ -302,11 +396,11 @@ function Stop-MagicClawServicesForInstall {
 
         $pidText = (Get-Content -LiteralPath $entry.File -Raw -ErrorAction SilentlyContinue).Trim()
         if ($pidText -match '^\d+$') {
-            $processId = [int]$pidText
-            if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
-                Write-Host "Stopping $($entry.Name) (pid $processId)..." -ForegroundColor Yellow
-                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-            }
+            Stop-ProcessIfOwnedByMagicClaw `
+                -ProcessId ([int]$pidText) `
+                -Label $entry.Name `
+                -AppDir $AppDir `
+                -HomeDir $HomeDir
         }
 
         Remove-Item -LiteralPath $entry.File -Force -ErrorAction SilentlyContinue
@@ -317,10 +411,11 @@ function Stop-MagicClawServicesForInstall {
             @{ Name = 'Web'; Port = $ports.Web }
         )) {
         $listenerPid = Get-ListenerProcessIdOnPort -Port $portEntry.Port
-        if ($listenerPid -gt 0) {
-            Write-Host "Stopping $($portEntry.Name) listener on port $($portEntry.Port) (pid $listenerPid)..." -ForegroundColor Yellow
-            Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
-        }
+        Stop-ProcessIfOwnedByMagicClaw `
+            -ProcessId $listenerPid `
+            -Label "$($portEntry.Name) listener on port $($portEntry.Port)" `
+            -AppDir $AppDir `
+            -HomeDir $HomeDir
     }
 
     Stop-ProcessesUsingInstallPath -AppDir $AppDir
@@ -328,7 +423,11 @@ function Stop-MagicClawServicesForInstall {
 }
 
 function Clear-InstallDirectoryContents {
-    param([string]$TargetDir)
+    param(
+        [string]$TargetDir,
+        [string]$HomeDir,
+        [string]$AppDir
+    )
 
     if (-not (Test-Path -LiteralPath $TargetDir)) {
         New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
@@ -346,6 +445,7 @@ function Clear-InstallDirectoryContents {
             }
 
             Write-Host "Install files are locked; retrying ($attempt/5)..." -ForegroundColor Yellow
+            Stop-MagicClawServicesForInstall -HomeDir $HomeDir -AppDir $AppDir
             Start-Sleep -Seconds 2
         }
     }
@@ -377,7 +477,7 @@ function Install-ReleaseBundle {
         Write-Host "Installing to $Dir..." -ForegroundColor Blue
 
         Stop-MagicClawServicesForInstall -HomeDir $MagicClawHome -AppDir $Dir
-        Clear-InstallDirectoryContents -TargetDir $Dir
+        Clear-InstallDirectoryContents -TargetDir $Dir -HomeDir $MagicClawHome -AppDir $Dir
 
         & tar -xzf $archive -C $Dir
         if ($LASTEXITCODE -ne 0) {
