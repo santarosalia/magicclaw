@@ -39,6 +39,10 @@ cp scripts/lib/detect-platform.sh "$STAGING/lib/detect-platform.sh"
 cp scripts/lib/node-fts5-check.sh "$STAGING/lib/node-fts5-check.sh"
 cp scripts/lib/normalize-path.sh "$STAGING/lib/normalize-path.sh"
 cp scripts/lib/resolve-release-tag.sh "$STAGING/lib/resolve-release-tag.sh"
+if [[ "$PLATFORM" == windows-* ]]; then
+  cp scripts/lib/magicclaw-github.ps1 "$STAGING/lib/magicclaw-github.ps1"
+  cp scripts/lib/magicclaw-service.ps1 "$STAGING/lib/magicclaw-service.ps1"
+fi
 chmod +x "$STAGING/lib/"*.sh 2>/dev/null || true
 if [[ "$PLATFORM" == windows-* ]]; then
   for script in "$STAGING/bin/magicclaw" "$STAGING/lib/"*.sh; do
