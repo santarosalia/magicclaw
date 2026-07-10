@@ -89,12 +89,61 @@ function Resolve-ReleaseTagBootstrap {
         $headers.Authorization = "Bearer $env:GITHUB_TOKEN"
     }
 
-    $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get
-    if (-not $response.tag_name) {
-        throw 'Could not resolve latest release. Specify -Version vX.Y.Z'
+    try {
+        $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get
+        if (-not $response.tag_name) {
+            throw 'Could not resolve latest release. Specify -Version vX.Y.Z'
+        }
+        return $response.tag_name
+    }
+    catch {
+        $tag = Get-MagicClawLatestReleaseTagFromRedirect -GitHubRepo $GitHubRepo
+        if ($tag) {
+            return $tag
+        }
+
+        throw "Could not resolve latest release via GitHub API or redirect. Specify -Version vX.Y.Z or set GITHUB_TOKEN.`n$($_.Exception.Message)"
+    }
+}
+
+function Get-MagicClawLatestReleaseTagFromRedirect {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubRepo
+    )
+
+    $uri = "https://github.com/$GitHubRepo/releases/latest"
+    $location = $null
+
+    try {
+        $request = [System.Net.HttpWebRequest]::Create($uri)
+        $request.Method = 'HEAD'
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = 'magicclaw-installer'
+        $response = $request.GetResponse()
+        $location = $response.Headers['Location']
+        if (-not $location -and $response.ResponseUri) {
+            $location = $response.ResponseUri.AbsoluteUri
+        }
+        $response.Close()
+    }
+    catch {
+        $webResponse = $_.Exception.Response
+        if ($webResponse) {
+            $location = $webResponse.Headers['Location']
+            $webResponse.Close()
+        }
     }
 
-    return $response.tag_name
+    if ($location -is [array]) {
+        $location = $location[0]
+    }
+
+    if ($location -and $location -match '/releases/tag/([^/?#]+)') {
+        return [Uri]::UnescapeDataString($Matches[1])
+    }
+
+    return $null
 }
 
 function Initialize-InstallModules {
