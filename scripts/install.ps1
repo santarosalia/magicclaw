@@ -82,8 +82,8 @@ function Resolve-ReleaseTagBootstrap {
 
     $apiUrl = "https://api.github.com/repos/$GitHubRepo/releases/latest"
     $headers = @{
-        Accept     = 'application/vnd.github+json'
-        User-Agent = 'magicclaw-installer'
+        Accept       = 'application/vnd.github+json'
+        'User-Agent' = 'magicclaw-installer'
     }
     if ($env:GITHUB_TOKEN) {
         $headers.Authorization = "Bearer $env:GITHUB_TOKEN"

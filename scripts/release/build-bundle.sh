@@ -103,7 +103,31 @@ chmod +x "$ROOT/scripts/release/smoke-test-web-standalone.sh"
 bash "$ROOT/scripts/release/smoke-test-web-standalone.sh" "$STAGING/web" "$NODE_BIN"
 if [[ "$PLATFORM" == windows-* ]]; then
   tmp_home="$(mktemp -d)"
+  ps_validate="$tmp_home/validate-powershell.ps1"
+  cat >"$ps_validate" <<'PS1'
+$root = $env:MAGICCLAW_PS_VALIDATE_ROOT
+$errors = @()
+
+Get-ChildItem -LiteralPath $root -Recurse -Filter '*.ps1' | ForEach-Object {
+  $tokens = $null
+  $parseErrors = $null
+  [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+  foreach ($err in $parseErrors) {
+    $errors += "$($_.FullName): $($err.Extent.StartLineNumber):$($err.Extent.StartColumnNumber) $($err.Message)"
+  }
+}
+
+if ($errors.Count -gt 0) {
+  $errors | ForEach-Object { Write-Error $_ }
+  exit 1
+}
+PS1
   if command -v pwsh >/dev/null 2>&1; then
+    if ! MAGICCLAW_PS_VALIDATE_ROOT="$STAGING" pwsh -NoProfile -ExecutionPolicy Bypass -File "$ps_validate"; then
+      echo "Error: PowerShell parse validation failed in staged bundle" >&2
+      rm -rf "$tmp_home"
+      exit 1
+    fi
     if ! MAGICCLAW_HOME="$tmp_home" pwsh -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >/dev/null 2>&1; then
       echo "Error: magicclaw.ps1 status failed in staged bundle" >&2
       MAGICCLAW_HOME="$tmp_home" pwsh -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >&2 || true
@@ -111,6 +135,11 @@ if [[ "$PLATFORM" == windows-* ]]; then
       exit 1
     fi
   elif command -v powershell >/dev/null 2>&1; then
+    if ! MAGICCLAW_PS_VALIDATE_ROOT="$STAGING" powershell -NoProfile -ExecutionPolicy Bypass -File "$ps_validate"; then
+      echo "Error: PowerShell parse validation failed in staged bundle" >&2
+      rm -rf "$tmp_home"
+      exit 1
+    fi
     if ! MAGICCLAW_HOME="$tmp_home" powershell -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >/dev/null 2>&1; then
       echo "Error: magicclaw.ps1 status failed in staged bundle" >&2
       MAGICCLAW_HOME="$tmp_home" powershell -NoProfile -ExecutionPolicy Bypass -File "$STAGING/bin/magicclaw.ps1" status >&2 || true
