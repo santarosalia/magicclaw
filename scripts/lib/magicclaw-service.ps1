@@ -134,7 +134,158 @@ function Test-CommandLineReferencesMagicClawInstall {
         }
     }
 
+    return (Test-ProcessLikelyMagicClawNode -CommandLine $CommandLine)
+}
+
+function Test-ProcessLikelyMagicClawNode {
+    param(
+        [string]$CommandLine
+    )
+
+    if (-not $CommandLine) {
+        return $false
+    }
+
+    $lower = $CommandLine.ToLowerInvariant()
+    foreach ($marker in @(
+            'dist\main.js',
+            'dist/main.js',
+            'apps\web\server.js',
+            'apps/web/server.js',
+            'web\apps\web\server.js',
+            'web/apps/web/server.js',
+            'web\server.js',
+            'web/server.js',
+            '.magicclaw\app\',
+            '.magicclaw/app/',
+            'magicclaw.ps1',
+            'magicclaw.cmd'
+        )) {
+        if ($lower.Contains($marker)) {
+            return $true
+        }
+    }
+
     return $false
+}
+
+function Clear-ShellLocationUnderPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+
+    try {
+        $normalizedTarget = $TargetPath.TrimEnd('\')
+        $current = (Get-Location).Path
+        if ($current -and ($current -eq $normalizedTarget -or $current.StartsWith("$normalizedTarget\"))) {
+            Set-Location -LiteralPath $env:TEMP
+        }
+    }
+    catch {
+    }
+}
+
+function Stop-MagicClawPortListeners {
+    param(
+        [string]$HomeDir,
+        [string]$AppDir,
+        [switch]$ForceConfiguredPorts,
+        [scriptblock]$WriteStatus
+    )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
+
+    $ports = Get-MagicClawPortsFromEnvFile -HomeDir $HomeDir
+    foreach ($entry in @(
+            @{ Name = 'API'; Port = $ports.Api },
+            @{ Name = 'Web'; Port = $ports.Web }
+        )) {
+        $listenerPid = Get-ListenerProcessIdOnPort -Port $entry.Port
+        if ($listenerPid -le 0) {
+            continue
+        }
+
+        if ($ForceConfiguredPorts -or (Test-ProcessIsMagicClawManaged -ProcessId $listenerPid -AppDir $AppDir -HomeDir $HomeDir)) {
+            & $WriteStatus "Stopping $($entry.Name) listener on port $($entry.Port) (pid $listenerPid)..."
+            Stop-ProcessTreeGracefully -ProcessId $listenerPid
+        }
+    }
+}
+
+function Stop-MagicClawNodeProcessesForInstall {
+    param(
+        [string]$AppDir,
+        [string]$HomeDir,
+        [scriptblock]$WriteStatus
+    )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
+
+    $processes = @(
+        Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+        Get-CimInstance Win32_Process -Filter "Name='nodejs.exe'" -ErrorAction SilentlyContinue
+    ) | Where-Object { $_ }
+
+    foreach ($proc in $processes) {
+        $processId = [int]$proc.ProcessId
+        if ($processId -le 0) {
+            continue
+        }
+
+        if (Test-ProcessIsMagicClawManaged -ProcessId $processId -AppDir $AppDir -HomeDir $HomeDir) {
+            & $WriteStatus "Stopping MagicClaw node process (pid $processId)..."
+            Stop-ProcessTreeGracefully -ProcessId $processId
+            continue
+        }
+
+        $commandLine = $proc.CommandLine
+        if (-not $commandLine) {
+            continue
+        }
+
+        $matchesInstallPath = ($AppDir -and $commandLine -like "*$($AppDir.TrimEnd('\'))*") -or
+            ($HomeDir -and $commandLine -like "*$($HomeDir.TrimEnd('\'))*")
+        if ($matchesInstallPath) {
+            & $WriteStatus "Stopping node process under MagicClaw install (pid $processId)..."
+            Stop-ProcessTreeGracefully -ProcessId $processId
+        }
+    }
+
+    foreach ($proc in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -and ($_.CommandLine -like '*magicclaw.ps1*' -or $_.CommandLine -like '*magicclaw.cmd*')
+        })) {
+        $processId = [int]$proc.ProcessId
+        if ($processId -le 0) {
+            continue
+        }
+
+        & $WriteStatus "Stopping MagicClaw launcher shell (pid $processId)..."
+        Stop-ProcessTreeGracefully -ProcessId $processId
+    }
+}
+
+function Stop-MagicClawInstallFileLocks {
+    param(
+        [string]$AppDir,
+        [string]$HomeDir,
+        [scriptblock]$WriteStatus
+    )
+
+    if (-not $WriteStatus) {
+        $WriteStatus = Get-DefaultServiceWriteStatus
+    }
+
+    Clear-ShellLocationUnderPath -TargetPath $AppDir
+    Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
+    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -ForceConfiguredPorts -WriteStatus $WriteStatus
+    Stop-MagicClawNodeProcessesForInstall -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+    [void](Wait-ForMagicClawPortsFree -HomeDir $HomeDir -TimeoutSeconds 25)
+    Start-Sleep -Milliseconds 800
 }
 
 function Test-ProcessIsMagicClawManaged {
@@ -295,7 +446,8 @@ function Invoke-MagicClawServiceStop {
         [string]$HomeDir,
         [string]$AppDir,
         [scriptblock]$StopViaLauncher,
-        [scriptblock]$WriteStatus
+        [scriptblock]$WriteStatus,
+        [switch]$Aggressive
     )
 
     if (-not $WriteStatus) {
@@ -309,11 +461,18 @@ function Invoke-MagicClawServiceStop {
             & $StopViaLauncher
         }
         catch {
-            # Fall back to pid-file cleanup below.
+            # Fall back to pid/port cleanup below.
         }
     }
 
     Stop-ProcessesFromPidFiles -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
+
+    if ($Aggressive) {
+        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+        return
+    }
+
+    Stop-MagicClawPortListeners -HomeDir $HomeDir -AppDir $AppDir -WriteStatus $WriteStatus
     [void](Wait-ForMagicClawPortsFree -HomeDir $HomeDir)
 }
 
@@ -353,6 +512,11 @@ function Swap-InstallDirectory {
     $leaf = Split-Path $TargetDir -Leaf
     $backupPath = $null
 
+    if ($AppDir -and $HomeDir) {
+        Clear-ShellLocationUnderPath -TargetPath $TargetDir
+        Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+    }
+
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
             if (Test-Path -LiteralPath $TargetDir) {
@@ -382,7 +546,10 @@ function Swap-InstallDirectory {
             }
 
             & $WriteStatus "Install files are locked; stopping services and retrying ($attempt/$MaxAttempts)..."
-            if ($BeforeRetry) {
+            if ($AppDir -and $HomeDir) {
+                Stop-MagicClawInstallFileLocks -AppDir $AppDir -HomeDir $HomeDir -WriteStatus $WriteStatus
+            }
+            elseif ($BeforeRetry) {
                 & $BeforeRetry
             }
             Start-Sleep -Seconds 2
