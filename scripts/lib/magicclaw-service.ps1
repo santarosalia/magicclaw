@@ -515,6 +515,22 @@ function Wait-ForMagicClawPortsFree {
     return $false
 }
 
+function Test-MagicClawScriptParsable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    $tokens = $null
+    $parseErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+    return ($parseErrors.Count -eq 0)
+}
+
 function Invoke-MagicClawServiceStop {
     param(
         [string]$HomeDir,
@@ -529,7 +545,7 @@ function Invoke-MagicClawServiceStop {
     }
 
     $launcher = Join-Path $AppDir 'bin\magicclaw.ps1'
-    if ($StopViaLauncher -and (Test-Path -LiteralPath $launcher)) {
+    if ($StopViaLauncher -and (Test-Path -LiteralPath $launcher) -and (Test-MagicClawScriptParsable -Path $launcher)) {
         try {
             & $WriteStatus 'Stopping running MagicClaw services via launcher...'
             & $StopViaLauncher
@@ -537,6 +553,9 @@ function Invoke-MagicClawServiceStop {
         catch {
             # Fall back to pid/port cleanup below.
         }
+    }
+    elseif ($StopViaLauncher -and (Test-Path -LiteralPath $launcher)) {
+        & $WriteStatus 'Skipping launcher stop - installed magicclaw.ps1 has parse errors; using service cleanup...'
     }
 
     $protectedProcessIds = Get-ProtectedInstallProcessIds

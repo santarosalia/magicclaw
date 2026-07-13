@@ -206,6 +206,11 @@ function Invoke-MagicClawLauncher {
         throw "magicclaw.ps1 not found at $launcher"
     }
 
+    if (-not (Test-MagicClawScriptParsable -Path $launcher)) {
+        Write-Warn "Skipping launcher at $launcher (script has parse errors)"
+        return
+    }
+
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     if ($pwsh) {
         & $pwsh.Source -NoProfile -ExecutionPolicy Bypass -File $launcher @LauncherArgs
@@ -268,11 +273,13 @@ function Stop-ExistingInstallIfNeeded {
         return
     }
 
+    # Do not invoke the on-disk launcher during upgrade: it may be an older broken
+    # magicclaw.ps1 until Swap-InstallDirectory completes. Aggressive service cleanup
+    # from magicclaw-service.ps1 is enough to release file locks.
     Invoke-MagicClawServiceStop `
         -HomeDir $MagicClawHome `
         -AppDir $Dir `
-        -Aggressive `
-        -StopViaLauncher { Invoke-MagicClawLauncher -AppInstallDir $Dir stop }
+        -Aggressive
 }
 
 function Install-ReleaseBundle {
