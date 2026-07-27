@@ -322,7 +322,7 @@ ${SKILLS_GUIDANCE}`;
         skillsIndexBlock: options.skillsIndexBlock ?? "",
       },
       {
-        streamMode: ["updates", "messages", "values"],
+        streamMode: ["updates", "values"],
         recursionLimit: this.recursionLimit,
       }
     );
@@ -330,6 +330,23 @@ ${SKILLS_GUIDANCE}`;
     let resultMessages: BaseMessage[] = [];
     let turnExitReason = "completed";
     let apiCallCount = 0;
+
+    const emitAssistantOrIntermediate = (messages: BaseMessage[]) => {
+      for (const message of messages) {
+        if (
+          !(message instanceof AIMessage || message instanceof AIMessageChunk)
+        ) {
+          continue;
+        }
+        const text = getMessageContentAsString(message).trim();
+        if (!text) continue;
+        if (message.tool_calls?.length) {
+          onEvent?.({ type: "intermediate_message", content: text });
+        } else {
+          onEvent?.({ type: "assistant_message", content: text });
+        }
+      }
+    };
 
     const emitToolCalls = (messages: BaseMessage[]) => {
       for (const message of messages) {
@@ -353,7 +370,12 @@ ${SKILLS_GUIDANCE}`;
       }
       if (kind === "updates") {
         if (data.callModel?.messages) {
-          emitToolCalls(data.callModel.messages);
+          const modelMessages = data.callModel.messages as BaseMessage[];
+          emitAssistantOrIntermediate(modelMessages);
+          emitToolCalls(modelMessages);
+        }
+        if (data.summarize?.messages) {
+          emitAssistantOrIntermediate(data.summarize.messages as BaseMessage[]);
         }
         if (data.tools) {
           for (const message of data.tools.messages as ToolMessage[]) {
@@ -362,18 +384,6 @@ ${SKILLS_GUIDANCE}`;
         }
         if (data.callModel?.turnExitReason) {
           turnExitReason = data.callModel.turnExitReason;
-        }
-        continue;
-      }
-      if (kind === "messages") {
-        const [token, metadata] = data;
-        if (
-          (metadata.langgraph_node === "callModel" ||
-            metadata.langgraph_node === "summarize") &&
-          token instanceof AIMessageChunk &&
-          token.content
-        ) {
-          onEvent?.({ type: "assistant_message", content: token.content });
         }
       }
     }
@@ -385,7 +395,16 @@ ${SKILLS_GUIDANCE}`;
     }
 
     if (resultMessages.length > 0) {
-      const last = resultMessages[resultMessages.length - 1];
+      const lastFinalAssistant = [...resultMessages]
+        .reverse()
+        .find(
+          (message) =>
+            (message instanceof AIMessage ||
+              message instanceof AIMessageChunk) &&
+            !message.tool_calls?.length
+        );
+      const last =
+        lastFinalAssistant ?? resultMessages[resultMessages.length - 1];
       onEvent?.({
         type: "final_message",
         message: getMessageContentAsString(last).trim(),

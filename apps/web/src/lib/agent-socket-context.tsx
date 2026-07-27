@@ -21,7 +21,12 @@ import {
 } from "@/lib/sessions-api";
 import { hydrateSessionMessages } from "@/lib/session-messages";
 
-export type ChatMessage = { role: "user" | "assistant"; content: string };
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  /** 도구 라운드 중간 서술 — UI에서 접힌 토글로만 표시 */
+  intermediate?: string[];
+};
 
 export type AgentSocketEvent =
   | {
@@ -37,11 +42,26 @@ export type AgentSocketEvent =
       content: string;
     }
   | {
+      type: "intermediate_message";
+      content: string;
+    }
+  | {
       type: "final_message";
       message: string;
       toolCallsUsed: number;
       toolCalls: { name: string; args: Record<string, unknown> }[];
     };
+
+function eventContentToString(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return (content as { type?: string; text?: string }[])
+      .filter((x) => x.type === "text" && typeof x.text === "string")
+      .map((x) => x.text as string)
+      .join("");
+  }
+  return content == null ? "" : String(content);
+}
 
 interface AgentSocketValue {
   userId: string;
@@ -51,6 +71,7 @@ interface AgentSocketValue {
   events: AgentSocketEvent[];
   loading: boolean;
   streamingContent: string;
+  intermediateMessages: string[];
   messages: ChatMessage[];
   sendChat: (userMessage: string, model?: string) => Promise<void>;
   startNewConversation: () => Promise<void>;
@@ -69,8 +90,12 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<AgentSocketEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [intermediateMessages, setIntermediateMessages] = useState<string[]>(
+    []
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const streamingContentRef = useRef("");
+  const intermediateMessagesRef = useRef<string[]>([]);
   const conversationIdRef = useRef<string | null>(null);
   const {
     addToolCalls,
@@ -116,11 +141,36 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    const pushIntermediate = (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      intermediateMessagesRef.current = [
+        ...intermediateMessagesRef.current,
+        trimmed,
+      ];
+      setIntermediateMessages(intermediateMessagesRef.current);
+    };
+
+    const clearStreaming = () => {
+      streamingContentRef.current = "";
+      setStreamingContent("");
+    };
+
+    const clearIntermediate = () => {
+      intermediateMessagesRef.current = [];
+      setIntermediateMessages([]);
+    };
+
     socket.on("agent_event", (event: AgentSocketEvent) => {
       setEvents((prev) => [...prev, event]);
 
       switch (event.type) {
         case "tool_call":
+          // 안전망: 아직 streaming 에 남은 중간 서술 회수
+          if (streamingContentRef.current.trim()) {
+            pushIntermediate(streamingContentRef.current);
+            clearStreaming();
+          }
           addToolCalls([event.toolCall as ToolCall]);
           break;
         case "tool_message":
@@ -128,31 +178,51 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
             addToolMessage(tm)
           );
           break;
+        case "intermediate_message":
+          pushIntermediate(eventContentToString(event.content));
+          break;
         case "assistant_message":
           setStreamingContent((prev) => {
-            const next = prev + event.content;
+            const next = prev + eventContentToString(event.content);
             streamingContentRef.current = next;
             return next;
           });
           break;
-        case "final_message":
+        case "final_message": {
+          // assistant_message 로 분류된 최종 스트림을 우선 (중간 서술 제외)
+          const finalText = (
+            streamingContentRef.current.trim() ||
+            event.message ||
+            ""
+          ).trim();
+          const intermediate = intermediateMessagesRef.current;
           setMessages((msgs) => [
             ...msgs,
-            { role: "assistant", content: streamingContentRef.current },
+            {
+              role: "assistant",
+              content: finalText,
+              intermediate:
+                intermediate.length > 0 ? [...intermediate] : undefined,
+            },
           ]);
-          setStreamingContent("");
+          clearStreaming();
+          clearIntermediate();
           setLoading(false);
           break;
+        }
       }
     });
 
     socket.on("agent_error", (payload: { message?: string }) => {
       const text =
         payload?.message?.trim() || "에이전트 처리 중 오류가 발생했습니다.";
-      streamingContentRef.current = "";
-      setStreamingContent("");
+      clearStreaming();
+      clearIntermediate();
       setLoading(false);
-      setMessages((msgs) => [...msgs, { role: "assistant", content: `오류: ${text}` }]);
+      setMessages((msgs) => [
+        ...msgs,
+        { role: "assistant", content: `오류: ${text}` },
+      ]);
     });
 
     socket.on("connect_error", () => {
@@ -201,6 +271,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setEvents([]);
       streamingContentRef.current = "";
       setStreamingContent("");
+      intermediateMessagesRef.current = [];
+      setIntermediateMessages([]);
       setLoading(true);
       setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
       try {
@@ -234,6 +306,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     resetToolCallStore();
     streamingContentRef.current = "";
     setStreamingContent("");
+    intermediateMessagesRef.current = [];
+    setIntermediateMessages([]);
     setLoading(false);
   }, [resetToolCallStore]);
 
@@ -246,6 +320,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     resetToolCallStore();
     streamingContentRef.current = "";
     setStreamingContent("");
+    intermediateMessagesRef.current = [];
+    setIntermediateMessages([]);
   }, [resetToolCallStore, userId]);
 
   const resumeConversation = useCallback(
@@ -256,6 +332,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       resetToolCallStore();
       streamingContentRef.current = "";
       setStreamingContent("");
+      intermediateMessagesRef.current = [];
+      setIntermediateMessages([]);
       setLoading(false);
 
       try {
@@ -281,6 +359,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         events,
         loading,
         streamingContent,
+        intermediateMessages,
         messages,
         sendChat,
         startNewConversation,

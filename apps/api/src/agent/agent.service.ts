@@ -50,7 +50,7 @@ export class AgentService {
       extraTools
     );
     try {
-      return this.conversationRunner.run(
+      return await this.conversationRunner.run(
         llm,
         tools,
         {

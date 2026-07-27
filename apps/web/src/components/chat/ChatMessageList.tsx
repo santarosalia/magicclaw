@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import type { ChatMessage } from "@/lib/agent-socket-context";
+import { IntermediateThoughts } from "@/components/chat/IntermediateThoughts";
 
 const markdownPlugins = {
   remark: [remarkGfm],
@@ -26,14 +27,19 @@ const ChatBubble = memo(function ChatBubble({
   }
 
   return (
-    <div className="mr-auto max-w-[85%] rounded-lg border bg-card px-4 py-2">
-      <div className="markdown-content prose prose-invert max-w-none">
-        <ReactMarkdown
-          remarkPlugins={markdownPlugins.remark}
-          rehypePlugins={markdownPlugins.rehype}
-        >
-          {message.content}
-        </ReactMarkdown>
+    <div className="mr-auto max-w-[85%] space-y-2">
+      {message.intermediate && message.intermediate.length > 0 ? (
+        <IntermediateThoughts items={message.intermediate} className="w-full" />
+      ) : null}
+      <div className="rounded-lg border bg-card px-4 py-2">
+        <div className="markdown-content prose prose-invert max-w-none">
+          <ReactMarkdown
+            remarkPlugins={markdownPlugins.remark}
+            rehypePlugins={markdownPlugins.rehype}
+          >
+            {message.content}
+          </ReactMarkdown>
+        </div>
       </div>
     </div>
   );
@@ -42,6 +48,7 @@ const ChatBubble = memo(function ChatBubble({
 interface ChatMessageListProps {
   messages: ChatMessage[];
   streamingContent: string;
+  intermediateMessages: string[];
   loading: boolean;
   connecting: boolean;
   connected: boolean;
@@ -51,6 +58,7 @@ interface ChatMessageListProps {
 export const ChatMessageList = memo(function ChatMessageList({
   messages,
   streamingContent,
+  intermediateMessages,
   loading,
   connecting,
   connected,
@@ -58,17 +66,30 @@ export const ChatMessageList = memo(function ChatMessageList({
 }: ChatMessageListProps) {
   return (
     <>
-      {messages.length === 0 && (
+      {messages.length === 0 && !loading && (
         <p className="text-muted-foreground text-sm text-center py-8">
           메시지를 입력하면 새 대화가 자동으로 시작됩니다.
         </p>
       )}
       {messages.map((m, i) => (
-        <ChatBubble key={`${i}-${m.role}-${m.content.slice(0, 32)}`} message={m} />
+        <ChatBubble
+          key={`${i}-${m.role}-${m.content.slice(0, 32)}`}
+          message={m}
+        />
       ))}
+      {loading && intermediateMessages.length > 0 ? (
+        <IntermediateThoughts items={intermediateMessages} />
+      ) : null}
       {loading && streamingContent ? (
         <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2">
-          <p className="text-sm whitespace-pre-wrap">{streamingContent}</p>
+          <div className="markdown-content prose prose-invert max-w-none">
+            <ReactMarkdown
+              remarkPlugins={markdownPlugins.remark}
+              rehypePlugins={markdownPlugins.rehype}
+            >
+              {streamingContent}
+            </ReactMarkdown>
+          </div>
         </div>
       ) : null}
       {(loading || connecting) && !streamingContent ? (

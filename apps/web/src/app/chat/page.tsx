@@ -25,6 +25,7 @@ export default function ChatPage() {
     connected,
     loading,
     streamingContent,
+    intermediateMessages,
     messages,
     sendChat,
     startNewConversation,
@@ -67,7 +68,7 @@ export default function ChatPage() {
     if (!shouldScrollMessagesRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     shouldScrollMessagesRef.current = false;
-  }, [messages, streamingContent, loading]);
+  }, [messages, streamingContent, intermediateMessages, loading]);
 
   const send = useCallback(
     async (text: string) => {
@@ -145,6 +146,7 @@ export default function ChatPage() {
             <ChatMessageList
               messages={messages}
               streamingContent={streamingContent}
+              intermediateMessages={intermediateMessages}
               loading={loading}
               connecting={connecting}
               connected={connected}
