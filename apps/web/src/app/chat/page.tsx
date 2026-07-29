@@ -26,6 +26,7 @@ export default function ChatPage() {
     loading,
     streamingContent,
     intermediateMessages,
+    streamAsAnswer,
     messages,
     sendChat,
     startNewConversation,
@@ -147,6 +148,7 @@ export default function ChatPage() {
               messages={messages}
               streamingContent={streamingContent}
               intermediateMessages={intermediateMessages}
+              streamAsAnswer={streamAsAnswer}
               loading={loading}
               connecting={connecting}
               connected={connected}

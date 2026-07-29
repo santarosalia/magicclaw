@@ -35,9 +35,7 @@ export class TurnFinalizerService {
     }
 
     const last = result.messages.at(-1);
-    const content = last
-      ? getMessageContentAsString(last).trim()
-      : "";
+    const content = last ? getMessageContentAsString(last).trim() : "";
 
     this.memoryManager.syncBuiltinFromTurn({
       userContent: ctx.userText,

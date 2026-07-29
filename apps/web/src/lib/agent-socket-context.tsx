@@ -72,6 +72,8 @@ interface AgentSocketValue {
   loading: boolean;
   streamingContent: string;
   intermediateMessages: string[];
+  /** true 면 현재 스트림을 채팅(최종 답)에, false 면 생각 과정에 표시 */
+  streamAsAnswer: boolean;
   messages: ChatMessage[];
   sendChat: (userMessage: string, model?: string) => Promise<void>;
   startNewConversation: () => Promise<void>;
@@ -93,9 +95,12 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const [intermediateMessages, setIntermediateMessages] = useState<string[]>(
     []
   );
+  /** 이번 턴에 tool_call 을 한 번이라도 받았으면 이후 스트림은 최종 답 영역으로 */
+  const [toolsSeenThisTurn, setToolsSeenThisTurn] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const streamingContentRef = useRef("");
   const intermediateMessagesRef = useRef<string[]>([]);
+  const toolsSeenThisTurnRef = useRef(false);
   const conversationIdRef = useRef<string | null>(null);
   const {
     addToolCalls,
@@ -161,16 +166,23 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setIntermediateMessages([]);
     };
 
+    const resetToolsSeen = () => {
+      toolsSeenThisTurnRef.current = false;
+      setToolsSeenThisTurn(false);
+    };
+
     socket.on("agent_event", (event: AgentSocketEvent) => {
       setEvents((prev) => [...prev, event]);
 
       switch (event.type) {
         case "tool_call":
-          // 안전망: 아직 streaming 에 남은 중간 서술 회수
+          // 스트림 중이던 서술 → 생각 과정으로 확정
           if (streamingContentRef.current.trim()) {
             pushIntermediate(streamingContentRef.current);
             clearStreaming();
           }
+          toolsSeenThisTurnRef.current = true;
+          setToolsSeenThisTurn(true);
           addToolCalls([event.toolCall as ToolCall]);
           break;
         case "tool_message":
@@ -189,7 +201,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           });
           break;
         case "final_message": {
-          // assistant_message 로 분류된 최종 스트림을 우선 (중간 서술 제외)
           const finalText = (
             streamingContentRef.current.trim() ||
             event.message ||
@@ -207,6 +218,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           ]);
           clearStreaming();
           clearIntermediate();
+          resetToolsSeen();
           setLoading(false);
           break;
         }
@@ -218,6 +230,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         payload?.message?.trim() || "에이전트 처리 중 오류가 발생했습니다.";
       clearStreaming();
       clearIntermediate();
+      resetToolsSeen();
       setLoading(false);
       setMessages((msgs) => [
         ...msgs,
@@ -273,6 +286,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setStreamingContent("");
       intermediateMessagesRef.current = [];
       setIntermediateMessages([]);
+      toolsSeenThisTurnRef.current = false;
+      setToolsSeenThisTurn(false);
       setLoading(true);
       setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
       try {
@@ -308,6 +323,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     setStreamingContent("");
     intermediateMessagesRef.current = [];
     setIntermediateMessages([]);
+    toolsSeenThisTurnRef.current = false;
+    setToolsSeenThisTurn(false);
     setLoading(false);
   }, [resetToolCallStore]);
 
@@ -322,6 +339,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     setStreamingContent("");
     intermediateMessagesRef.current = [];
     setIntermediateMessages([]);
+    toolsSeenThisTurnRef.current = false;
+    setToolsSeenThisTurn(false);
   }, [resetToolCallStore, userId]);
 
   const resumeConversation = useCallback(
@@ -334,6 +353,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setStreamingContent("");
       intermediateMessagesRef.current = [];
       setIntermediateMessages([]);
+      toolsSeenThisTurnRef.current = false;
+      setToolsSeenThisTurn(false);
       setLoading(false);
 
       try {
@@ -360,6 +381,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         loading,
         streamingContent,
         intermediateMessages,
+        streamAsAnswer: toolsSeenThisTurn,
         messages,
         sendChat,
         startNewConversation,

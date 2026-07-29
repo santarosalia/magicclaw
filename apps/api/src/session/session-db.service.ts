@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  OnModuleDestroy,
-  OnModuleInit,
-} from "@nestjs/common";
+import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -225,7 +221,9 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     const db = this.getDb();
     db.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId);
     if (this.ftsEnabled) {
-      db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+      db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(
+        sessionId
+      );
     }
     db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
   }
@@ -239,12 +237,17 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     return deserializeMessages(rows);
   }
 
-  async replaceMessages(sessionId: string, messages: BaseMessage[]): Promise<void> {
+  async replaceMessages(
+    sessionId: string,
+    messages: BaseMessage[]
+  ): Promise<void> {
     this.runInTransaction(() => {
       const db = this.getDb();
       db.prepare(`DELETE FROM messages WHERE session_id = ?`).run(sessionId);
       if (this.ftsEnabled) {
-        db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(sessionId);
+        db.prepare(`DELETE FROM messages_fts WHERE session_id = ?`).run(
+          sessionId
+        );
       }
 
       const insert = db.prepare(
@@ -280,7 +283,10 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async appendMessages(sessionId: string, messages: BaseMessage[]): Promise<void> {
+  async appendMessages(
+    sessionId: string,
+    messages: BaseMessage[]
+  ): Promise<void> {
     if (messages.length === 0) return;
 
     this.runInTransaction(() => {
@@ -415,7 +421,10 @@ export class SessionDbService implements OnModuleInit, OnModuleDestroy {
       return { sql: "s.user_id = ?", params: [userId] };
     }
 
-    const clauses = ["s.user_id = ?", ...terms.map(() => "m.search_text LIKE ?")];
+    const clauses = [
+      "s.user_id = ?",
+      ...terms.map(() => "m.search_text LIKE ?"),
+    ];
     const params = [userId, ...terms.map((t) => `%${t}%`)];
     return { sql: clauses.join(" AND "), params };
   }

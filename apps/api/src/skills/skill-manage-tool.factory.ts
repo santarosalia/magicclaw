@@ -40,7 +40,10 @@ export function createSkillManageTool(
         ])
         .optional()
         .default("list"),
-      name: z.string().optional().describe("Skill name for read/edit/patch/delete/uninstall."),
+      name: z
+        .string()
+        .optional()
+        .describe("Skill name for read/edit/patch/delete/uninstall."),
       description: z
         .string()
         .optional()
@@ -82,14 +85,18 @@ export function createSkillManageTool(
           return JSON.stringify({ installed: skillsHub.listInstalled() });
         case "read":
           if (!name?.trim()) {
-            return JSON.stringify({ success: false, error: "name is required." });
+            return JSON.stringify({
+              success: false,
+              error: "name is required.",
+            });
           }
           return JSON.stringify(skillStore.readSkill(name));
         case "install": {
           if (!identifier?.trim()) {
             return JSON.stringify({
               success: false,
-              error: "install requires identifier (owner/repo or GitHub tree URL).",
+              error:
+                "install requires identifier (owner/repo or GitHub tree URL).",
             });
           }
           return JSON.stringify(
@@ -98,7 +105,10 @@ export function createSkillManageTool(
         }
         case "uninstall":
           if (!name?.trim()) {
-            return JSON.stringify({ success: false, error: "name is required." });
+            return JSON.stringify({
+              success: false,
+              error: "name is required.",
+            });
           }
           return JSON.stringify(skillsHub.uninstall(name));
         case "create": {
@@ -121,16 +131,25 @@ export function createSkillManageTool(
           }
           return JSON.stringify(skillStore.editSkill(name, content));
         case "patch":
-          if (!name?.trim() || old_text === undefined || new_text === undefined) {
+          if (
+            !name?.trim() ||
+            old_text === undefined ||
+            new_text === undefined
+          ) {
             return JSON.stringify({
               success: false,
               error: "patch requires name, old_text, and new_text.",
             });
           }
-          return JSON.stringify(skillStore.patchSkill(name, old_text, new_text));
+          return JSON.stringify(
+            skillStore.patchSkill(name, old_text, new_text)
+          );
         case "delete":
           if (!name?.trim()) {
-            return JSON.stringify({ success: false, error: "name is required." });
+            return JSON.stringify({
+              success: false,
+              error: "name is required.",
+            });
           }
           return JSON.stringify(skillStore.deleteSkill(name));
         default:

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SkillStoreService } from "./skill-store.service.js";
@@ -18,6 +18,56 @@ describe("SkillStoreService", () => {
     if (prevHome === undefined) delete process.env.MAGICCLAW_HOME;
     else process.env.MAGICCLAW_HOME = prevHome;
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it("parses multiline YAML description block scalars", () => {
+    const skillDir = join(home, "skills", "deploy");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: deploy-api
+description: |
+  Deploy the API to staging.
+  Use when shipping a release.
+---
+
+# Deploy
+`,
+      "utf8"
+    );
+
+    const store = new SkillStoreService(new SkillUsageService());
+    const listed = store.listSkills();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].name).toBe("deploy-api");
+    expect(listed[0].description).toContain("Deploy the API to staging.");
+    expect(listed[0].description).toContain("Use when shipping a release.");
+  });
+
+  it("parses folded YAML description scalars", () => {
+    const skillDir = join(home, "skills", "review");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: code-review
+description: >
+  Review pull requests for correctness
+  and security issues.
+---
+
+# Review
+`,
+      "utf8"
+    );
+
+    const store = new SkillStoreService(new SkillUsageService());
+    const listed = store.listSkills();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].description).toMatch(
+      /Review pull requests for correctness\s+and security issues\./
+    );
   });
 
   it("creates, lists, reads, patches, and deletes a skill", () => {

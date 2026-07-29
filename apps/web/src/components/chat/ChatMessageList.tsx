@@ -49,6 +49,8 @@ interface ChatMessageListProps {
   messages: ChatMessage[];
   streamingContent: string;
   intermediateMessages: string[];
+  /** true: 스트림을 채팅 버블에 / false: 생각 과정 토글에 */
+  streamAsAnswer: boolean;
   loading: boolean;
   connecting: boolean;
   connected: boolean;
@@ -59,11 +61,17 @@ export const ChatMessageList = memo(function ChatMessageList({
   messages,
   streamingContent,
   intermediateMessages,
+  streamAsAnswer,
   loading,
   connecting,
   connected,
   messagesEndRef,
 }: ChatMessageListProps) {
+  const thoughtsLive =
+    loading && streamingContent && !streamAsAnswer ? streamingContent : "";
+  const answerLive =
+    loading && streamingContent && streamAsAnswer ? streamingContent : "";
+
   return (
     <>
       {messages.length === 0 && !loading && (
@@ -77,17 +85,20 @@ export const ChatMessageList = memo(function ChatMessageList({
           message={m}
         />
       ))}
-      {loading && intermediateMessages.length > 0 ? (
-        <IntermediateThoughts items={intermediateMessages} />
+      {loading && (intermediateMessages.length > 0 || thoughtsLive) ? (
+        <IntermediateThoughts
+          items={intermediateMessages}
+          liveText={thoughtsLive || undefined}
+        />
       ) : null}
-      {loading && streamingContent ? (
+      {answerLive ? (
         <div className="mr-auto max-w-[85%] rounded-lg border border-primary/20 bg-card px-4 py-2">
           <div className="markdown-content prose prose-invert max-w-none">
             <ReactMarkdown
               remarkPlugins={markdownPlugins.remark}
               rehypePlugins={markdownPlugins.rehype}
             >
-              {streamingContent}
+              {answerLive}
             </ReactMarkdown>
           </div>
         </div>

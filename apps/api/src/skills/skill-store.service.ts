@@ -10,6 +10,7 @@ import {
 import { join, relative, resolve } from "node:path";
 import { Injectable, Optional } from "@nestjs/common";
 import { getMagicClawHome } from "../common/magicclaw-home.js";
+import { parseSkillFrontmatter } from "./parse-skill-frontmatter.js";
 import type { SkillUsageService } from "./skill-usage.service.js";
 
 export interface SkillSummary {
@@ -25,9 +26,7 @@ const MAX_SKILL_BODY_BYTES = 64 * 1024;
 
 @Injectable()
 export class SkillStoreService {
-  constructor(
-    @Optional() private readonly usage?: SkillUsageService
-  ) {}
+  constructor(@Optional() private readonly usage?: SkillUsageService) {}
 
   private skillsRoot(): string {
     return join(getMagicClawHome(), "skills");
@@ -49,14 +48,20 @@ export class SkillStoreService {
     const lines = skills.map(
       (s) => `- ${s.name} (${s.category}): ${s.description || "no description"}`
     );
-    return `## INSTALLED SKILLS\nUse skill_manage(action="read", name="...") to load full instructions before matching work.\n${lines.join("\n")}`;
+    return `## INSTALLED SKILLS\nUse skill_manage(action="read", name="...") to load full instructions before matching work.\n${lines.join(
+      "\n"
+    )}`;
   }
 
   getSkillDir(name: string): string | null {
     return this.findSkillDir(name);
   }
 
-  readSkill(name: string): { success: boolean; content?: string; error?: string } {
+  readSkill(name: string): {
+    success: boolean;
+    content?: string;
+    error?: string;
+  } {
     const skillDir = this.findSkillDir(name);
     if (!skillDir) {
       return { success: false, error: `Skill '${name}' not found.` };
@@ -149,7 +154,8 @@ export class SkillStoreService {
     if (this.usage?.isHubInstalled(name)) {
       return {
         success: false,
-        error: "Hub-installed skills must be removed with skill_manage uninstall.",
+        error:
+          "Hub-installed skills must be removed with skill_manage uninstall.",
       };
     }
     const skillDir = this.findSkillDir(name);
@@ -157,18 +163,17 @@ export class SkillStoreService {
       return { success: false, error: `Skill '${name}' not found.` };
     }
     if (!this.isInsideSkillsRoot(skillDir)) {
-      return { success: false, error: "Refusing to delete path outside skills root." };
+      return {
+        success: false,
+        error: "Refusing to delete path outside skills root.",
+      };
     }
     rmSync(skillDir, { recursive: true, force: true });
     this.usage?.forget(name);
     return { success: true };
   }
 
-  private walkSkills(
-    root: string,
-    dir: string,
-    out: SkillSummary[]
-  ): void {
+  private walkSkills(root: string, dir: string, out: SkillSummary[]): void {
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -178,7 +183,7 @@ export class SkillStoreService {
 
     const skillPath = join(dir, "SKILL.md");
     if (existsSync(skillPath) && statSync(skillPath).isFile()) {
-      const meta = this.parseSkillFrontmatter(readFileSync(skillPath, "utf8"));
+      const meta = parseSkillFrontmatter(readFileSync(skillPath, "utf8"));
       const rel = relative(root, dir);
       const category = rel.includes("/") ? rel.split("/")[0] : "user";
       out.push({
@@ -203,24 +208,6 @@ export class SkillStoreService {
     }
   }
 
-  private parseSkillFrontmatter(raw: string): {
-    name: string;
-    description: string;
-  } {
-    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!match) return { name: "", description: "" };
-
-    let name = "";
-    let description = "";
-    for (const line of match[1].split("\n")) {
-      const [key, ...rest] = line.split(":");
-      const value = rest.join(":").trim();
-      if (key.trim() === "name") name = value;
-      if (key.trim() === "description") description = value;
-    }
-    return { name, description };
-  }
-
   private buildSkillMarkdown(
     name: string,
     description: string,
@@ -230,8 +217,8 @@ export class SkillStoreService {
       description.length > MAX_DESCRIPTION_LENGTH
         ? `${description.slice(0, MAX_DESCRIPTION_LENGTH - 1)}.`
         : description.endsWith(".")
-          ? description
-          : `${description}.`;
+        ? description
+        : `${description}.`;
 
     const trimmedBody = body.trim();
     if (trimmedBody.startsWith("---")) return trimmedBody;
@@ -263,7 +250,7 @@ ${trimmedBody}
       }
 
       if (existsSync(join(dir, "SKILL.md"))) {
-        const meta = this.parseSkillFrontmatter(
+        const meta = parseSkillFrontmatter(
           readFileSync(join(dir, "SKILL.md"), "utf8")
         );
         const dirName = dir.split("/").pop() ?? "";

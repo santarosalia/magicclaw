@@ -10,7 +10,10 @@ import {
 } from "@nestjs/common";
 import { SessionDbService } from "./session-db.service.js";
 import { SessionService } from "./session.service.js";
-import { AgentChannel, getMessageContentAsString } from "../agent/agent.types.js";
+import {
+  AgentChannel,
+  getMessageContentAsString,
+} from "../agent/agent.types.js";
 
 @Controller("sessions")
 export class SessionController {
@@ -29,7 +32,11 @@ export class SessionController {
   @Post()
   create(
     @Body()
-    body: { userId: string; channel?: AgentChannel; title?: string }
+    body: {
+      userId: string;
+      channel?: AgentChannel;
+      title?: string;
+    }
   ) {
     return this.sessionDb.createSession({
       userId: body.userId,

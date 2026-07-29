@@ -322,7 +322,7 @@ ${SKILLS_GUIDANCE}`;
         skillsIndexBlock: options.skillsIndexBlock ?? "",
       },
       {
-        streamMode: ["updates", "values"],
+        streamMode: ["updates", "messages", "values"],
         recursionLimit: this.recursionLimit,
       }
     );
@@ -330,6 +330,8 @@ ${SKILLS_GUIDANCE}`;
     let resultMessages: BaseMessage[] = [];
     let turnExitReason = "completed";
     let apiCallCount = 0;
+    /** 현재 callModel/summarize 라운드에서 messages 스트림으로 보낸 글자 수 */
+    let roundStreamedChars = 0;
 
     const emitAssistantOrIntermediate = (messages: BaseMessage[]) => {
       for (const message of messages) {
@@ -361,6 +363,13 @@ ${SKILLS_GUIDANCE}`;
       }
     };
 
+    const hasToolCallsIn = (messages: BaseMessage[]) =>
+      messages.some(
+        (message) =>
+          (message instanceof AIMessage || message instanceof AIMessageChunk) &&
+          Boolean(message.tool_calls?.length)
+      );
+
     for await (const [kind, data] of stream) {
       if (kind === "values") {
         resultMessages = data.messages;
@@ -371,11 +380,22 @@ ${SKILLS_GUIDANCE}`;
       if (kind === "updates") {
         if (data.callModel?.messages) {
           const modelMessages = data.callModel.messages as BaseMessage[];
-          emitAssistantOrIntermediate(modelMessages);
+          // 토큰 스트림이 없었을 때만 완성 메시지로 보완 (중복 방지)
+          if (roundStreamedChars === 0) {
+            emitAssistantOrIntermediate(modelMessages);
+          } else if (hasToolCallsIn(modelMessages)) {
+            // 스트림된 텍스트는 프론트가 tool_call 시 intermediate 로 회수
+          }
           emitToolCalls(modelMessages);
+          roundStreamedChars = 0;
         }
         if (data.summarize?.messages) {
-          emitAssistantOrIntermediate(data.summarize.messages as BaseMessage[]);
+          if (roundStreamedChars === 0) {
+            emitAssistantOrIntermediate(
+              data.summarize.messages as BaseMessage[]
+            );
+          }
+          roundStreamedChars = 0;
         }
         if (data.tools) {
           for (const message of data.tools.messages as ToolMessage[]) {
@@ -384,6 +404,24 @@ ${SKILLS_GUIDANCE}`;
         }
         if (data.callModel?.turnExitReason) {
           turnExitReason = data.callModel.turnExitReason;
+        }
+        continue;
+      }
+      if (kind === "messages") {
+        const [token, metadata] = data;
+        if (
+          (metadata.langgraph_node === "callModel" ||
+            metadata.langgraph_node === "summarize") &&
+          token instanceof AIMessageChunk &&
+          token.content
+        ) {
+          const text =
+            typeof token.content === "string"
+              ? token.content
+              : getMessageContentAsString(token);
+          if (!text) continue;
+          roundStreamedChars += text.length;
+          onEvent?.({ type: "assistant_message", content: text });
         }
       }
     }

@@ -9,6 +9,7 @@ import {
 import { join, dirname } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { getMagicClawHome } from "../common/magicclaw-home.js";
+import { parseSkillFrontmatter } from "./parse-skill-frontmatter.js";
 
 export interface HubLockEntry {
   source: string;
@@ -218,13 +219,7 @@ export class SkillsHubService {
   }
 
   private parseSkillName(skillMd: string): string {
-    const match = skillMd.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!match) return "";
-    for (const line of match[1].split("\n")) {
-      const [key, ...rest] = line.split(":");
-      if (key.trim() === "name") return rest.join(":").trim();
-    }
-    return "";
+    return parseSkillFrontmatter(skillMd).name;
   }
 
   private async downloadSkillTree(parsed: {

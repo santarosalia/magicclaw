@@ -21,7 +21,14 @@ import { TodoStoreService } from "./todo-store.service.js";
 import { CHAT_ORCHESTRATOR } from "../messenger/chat-orchestrator.port.js";
 
 @Module({
-  imports: [StoreModule, McpModule, SessionModule, MemoryModule, UserModule, SkillsModule],
+  imports: [
+    StoreModule,
+    McpModule,
+    SessionModule,
+    MemoryModule,
+    UserModule,
+    SkillsModule,
+  ],
   controllers: [AgentController],
   providers: [
     AgentService,
