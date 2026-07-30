@@ -33,25 +33,46 @@ export type AgentSocketEvent =
   | {
       type: "tool_call";
       toolCall: ToolCall;
+      sessionId?: string;
     }
   | {
       type: "tool_message";
       toolMessage: ToolMessage;
+      sessionId?: string;
     }
   | {
       type: "assistant_message";
       content: string;
+      sessionId?: string;
     }
   | {
       type: "intermediate_message";
       content: string;
+      sessionId?: string;
     }
   | {
       type: "final_message";
       message: string;
-      toolCallsUsed: number;
-      toolCalls: { name: string; args: Record<string, unknown> }[];
+      sessionId?: string;
+      toolCallsUsed?: number;
+      toolCalls?: { name: string; args: Record<string, unknown> }[];
     };
+
+type LiveTurn = {
+  streamingContent: string;
+  intermediateMessages: string[];
+  toolsSeen: boolean;
+  loading: boolean;
+};
+
+function emptyLiveTurn(): LiveTurn {
+  return {
+    streamingContent: "",
+    intermediateMessages: [],
+    toolsSeen: false,
+    loading: false,
+  };
+}
 
 function eventContentToString(content: unknown): string {
   if (typeof content === "string") return content;
@@ -103,6 +124,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const intermediateMessagesRef = useRef<string[]>([]);
   const toolsSeenThisTurnRef = useRef(false);
   const conversationIdRef = useRef<string | null>(null);
+  /** 세션별 진행 중 스트림 — 대화 전환 후에도 서로 섞이지 않게 보관 */
+  const liveTurnsRef = useRef<Map<string, LiveTurn>>(new Map());
   const {
     addToolCalls,
     addToolMessage,
@@ -130,6 +153,37 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     });
     socketRef.current = socket;
 
+    const getLive = (sessionId: string): LiveTurn => {
+      let turn = liveTurnsRef.current.get(sessionId);
+      if (!turn) {
+        turn = emptyLiveTurn();
+        liveTurnsRef.current.set(sessionId, turn);
+      }
+      return turn;
+    };
+
+    const syncLiveToUi = (sessionId: string) => {
+      if (sessionId !== conversationIdRef.current) return;
+      const turn = getLive(sessionId);
+      streamingContentRef.current = turn.streamingContent;
+      setStreamingContent(turn.streamingContent);
+      intermediateMessagesRef.current = turn.intermediateMessages;
+      setIntermediateMessages([...turn.intermediateMessages]);
+      toolsSeenThisTurnRef.current = turn.toolsSeen;
+      setToolsSeenThisTurn(turn.toolsSeen);
+      setLoading(turn.loading);
+    };
+
+    const clearUiStream = () => {
+      streamingContentRef.current = "";
+      setStreamingContent("");
+      intermediateMessagesRef.current = [];
+      setIntermediateMessages([]);
+      toolsSeenThisTurnRef.current = false;
+      setToolsSeenThisTurn(false);
+      setLoading(false);
+    };
+
     socket.on("connect", () => {
       setConnected(true);
       setConnecting(false);
@@ -147,103 +201,106 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const pushIntermediate = (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      intermediateMessagesRef.current = [
-        ...intermediateMessagesRef.current,
-        trimmed,
-      ];
-      setIntermediateMessages(intermediateMessagesRef.current);
-    };
-
-    const clearStreaming = () => {
-      streamingContentRef.current = "";
-      setStreamingContent("");
-    };
-
-    const clearIntermediate = () => {
-      intermediateMessagesRef.current = [];
-      setIntermediateMessages([]);
-    };
-
-    const resetToolsSeen = () => {
-      toolsSeenThisTurnRef.current = false;
-      setToolsSeenThisTurn(false);
-    };
-
     socket.on("agent_event", (event: AgentSocketEvent) => {
-      setEvents((prev) => [...prev, event]);
+      const sessionId =
+        event.sessionId?.trim() || conversationIdRef.current || "";
+      if (!sessionId) return;
+
+      const isActive = sessionId === conversationIdRef.current;
+      const live = getLive(sessionId);
+
+      if (isActive) {
+        setEvents((prev) => [...prev, event]);
+      }
 
       switch (event.type) {
         case "tool_call":
-          // 스트림 중이던 서술 → 생각 과정으로 확정
-          if (streamingContentRef.current.trim()) {
-            pushIntermediate(streamingContentRef.current);
-            clearStreaming();
+          if (live.streamingContent.trim()) {
+            live.intermediateMessages = [
+              ...live.intermediateMessages,
+              live.streamingContent.trim(),
+            ];
+            live.streamingContent = "";
           }
-          toolsSeenThisTurnRef.current = true;
-          setToolsSeenThisTurn(true);
-          addToolCalls([event.toolCall as ToolCall]);
+          live.toolsSeen = true;
+          live.loading = true;
+          if (isActive) {
+            addToolCalls([event.toolCall as ToolCall]);
+            syncLiveToUi(sessionId);
+          }
           break;
         case "tool_message":
-          load<ToolMessage>(JSON.stringify(event.toolMessage)).then((tm) =>
-            addToolMessage(tm)
-          );
+          if (isActive) {
+            load<ToolMessage>(JSON.stringify(event.toolMessage)).then((tm) =>
+              addToolMessage(tm)
+            );
+          }
           break;
-        case "intermediate_message":
-          pushIntermediate(eventContentToString(event.content));
+        case "intermediate_message": {
+          const text = eventContentToString(event.content).trim();
+          if (text) {
+            live.intermediateMessages = [...live.intermediateMessages, text];
+            live.loading = true;
+          }
+          if (isActive) syncLiveToUi(sessionId);
           break;
-        case "assistant_message":
-          setStreamingContent((prev) => {
-            const next = prev + eventContentToString(event.content);
-            streamingContentRef.current = next;
-            return next;
-          });
+        }
+        case "assistant_message": {
+          live.streamingContent += eventContentToString(event.content);
+          live.loading = true;
+          if (isActive) syncLiveToUi(sessionId);
           break;
+        }
         case "final_message": {
           const rawFinal = (
-            streamingContentRef.current.trim() ||
+            live.streamingContent.trim() ||
             event.message ||
             ""
           ).trim();
           const { thinkingParts, answer } = splitModelThinkBlocks(rawFinal);
           const intermediate = [
-            ...intermediateMessagesRef.current,
+            ...live.intermediateMessages,
             ...thinkingParts,
           ];
-          setMessages((msgs) => [
-            ...msgs,
-            {
-              role: "assistant",
-              content:
-                answer ||
-                (thinkingParts.length === 0 ? rawFinal : ""),
-              intermediate:
-                intermediate.length > 0 ? intermediate : undefined,
-            },
-          ]);
-          clearStreaming();
-          clearIntermediate();
-          resetToolsSeen();
-          setLoading(false);
+          const assistantMessage: ChatMessage = {
+            role: "assistant",
+            content:
+              answer || (thinkingParts.length === 0 ? rawFinal : ""),
+            intermediate:
+              intermediate.length > 0 ? intermediate : undefined,
+          };
+
+          liveTurnsRef.current.delete(sessionId);
+
+          if (isActive) {
+            setMessages((msgs) => [...msgs, assistantMessage]);
+            clearUiStream();
+          }
           break;
         }
       }
     });
 
-    socket.on("agent_error", (payload: { message?: string }) => {
-      const text =
-        payload?.message?.trim() || "에이전트 처리 중 오류가 발생했습니다.";
-      clearStreaming();
-      clearIntermediate();
-      resetToolsSeen();
-      setLoading(false);
-      setMessages((msgs) => [
-        ...msgs,
-        { role: "assistant", content: `오류: ${text}` },
-      ]);
-    });
+    socket.on(
+      "agent_error",
+      (payload: { message?: string; sessionId?: string }) => {
+        const sessionId =
+          payload?.sessionId?.trim() || conversationIdRef.current || "";
+        if (!sessionId) return;
+
+        liveTurnsRef.current.delete(sessionId);
+
+        if (sessionId !== conversationIdRef.current) return;
+
+        const text =
+          payload?.message?.trim() || "에이전트 처리 중 오류가 발생했습니다.";
+        clearUiStream();
+        setMessages((msgs) => [
+          ...msgs,
+          { role: "assistant", content: `오류: ${text}` },
+        ]);
+      }
+    );
 
     socket.on("connect_error", () => {
       setConnected(false);
@@ -288,6 +345,14 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      const live: LiveTurn = {
+        streamingContent: "",
+        intermediateMessages: [],
+        toolsSeen: false,
+        loading: true,
+      };
+      liveTurnsRef.current.set(activeSessionId, live);
+
       setEvents([]);
       streamingContentRef.current = "";
       setStreamingContent("");
@@ -305,6 +370,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           conversationId: activeSessionId,
         });
       } catch (error) {
+        liveTurnsRef.current.delete(activeSessionId);
         setLoading(false);
         setMessages((prev) => [
           ...prev,
@@ -321,6 +387,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   );
 
   const clearCurrentConversation = useCallback(() => {
+    const prev = conversationIdRef.current;
+    if (prev) liveTurnsRef.current.delete(prev);
     conversationIdRef.current = null;
     setConversationId(null);
     setMessages([]);
@@ -348,6 +416,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     setIntermediateMessages([]);
     toolsSeenThisTurnRef.current = false;
     setToolsSeenThisTurn(false);
+    setLoading(false);
   }, [resetToolCallStore, userId]);
 
   const resumeConversation = useCallback(
@@ -356,20 +425,35 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
       setConversationId(sessionId);
       setEvents([]);
       resetToolCallStore();
-      streamingContentRef.current = "";
-      setStreamingContent("");
-      intermediateMessagesRef.current = [];
-      setIntermediateMessages([]);
-      toolsSeenThisTurnRef.current = false;
-      setToolsSeenThisTurn(false);
-      setLoading(false);
+
+      const live = liveTurnsRef.current.get(sessionId);
+      if (live?.loading) {
+        streamingContentRef.current = live.streamingContent;
+        setStreamingContent(live.streamingContent);
+        intermediateMessagesRef.current = live.intermediateMessages;
+        setIntermediateMessages([...live.intermediateMessages]);
+        toolsSeenThisTurnRef.current = live.toolsSeen;
+        setToolsSeenThisTurn(live.toolsSeen);
+        setLoading(true);
+      } else {
+        streamingContentRef.current = "";
+        setStreamingContent("");
+        intermediateMessagesRef.current = [];
+        setIntermediateMessages([]);
+        toolsSeenThisTurnRef.current = false;
+        setToolsSeenThisTurn(false);
+        setLoading(false);
+      }
 
       try {
         const rows = await loadSessionMessages(sessionId);
         const hydrated = await hydrateSessionMessages(rows);
+        // 전환 중에 다른 세션을 또 고르면 덮어쓰지 않음
+        if (conversationIdRef.current !== sessionId) return;
         setMessages(hydrated.chatMessages);
         restoreToolCallStore(hydrated.toolCalls, hydrated.toolMessages);
       } catch {
+        if (conversationIdRef.current !== sessionId) return;
         setMessages([]);
         resetToolCallStore();
       }

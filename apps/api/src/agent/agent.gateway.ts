@@ -71,7 +71,7 @@ export class AgentGateway {
     }
 
     const onEvent = (event: AgentEvent) => {
-      client.emit("agent_event", event);
+      client.emit("agent_event", { ...event, sessionId });
     };
 
     try {
@@ -89,6 +89,7 @@ export class AgentGateway {
         this.logger.debug(error.stack);
       }
       client.emit("agent_error", {
+        sessionId,
         message: message || "에이전트 처리 중 오류가 발생했습니다.",
       });
     }
