@@ -11,6 +11,8 @@ export interface AgentChatOptions {
   systemMemoryBlock?: string;
   contextFilesBlock?: string;
   skillsIndexBlock?: string;
+  /** Active LLM context window (tokens); budget uses this unless env overrides. */
+  contextWindow?: number;
   refreshMemoryBlocks?: () => {
     systemMemoryBlock: string;
     memoryContext: string;

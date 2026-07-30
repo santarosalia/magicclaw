@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Plus, Trash2, Star, StarOff } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2, Star, StarOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useLlmStatus } from '@/lib/llm-status-context';
+
+type ContextWindowSource = 'api' | 'heuristic' | 'manual' | 'fallback';
 
 type LlmConfig = {
   id: string;
@@ -17,7 +19,25 @@ type LlmConfig = {
   apiKey?: string;
   createdAt: string;
   isDefault?: boolean;
+  contextWindow?: number;
+  contextWindowSource?: ContextWindowSource;
+  contextWindowCheckedAt?: string;
 };
+
+const SOURCE_LABEL: Record<ContextWindowSource, string> = {
+  api: 'API',
+  heuristic: '추정',
+  manual: '수동',
+  fallback: '폴백',
+};
+
+function formatContextWindow(config: LlmConfig): string {
+  if (!config.contextWindow) return '미확인';
+  const source = config.contextWindowSource
+    ? SOURCE_LABEL[config.contextWindowSource]
+    : '?';
+  return `${config.contextWindow.toLocaleString()} (${source})`;
+}
 
 export default function LlmPage() {
   const { refreshLlmStatus } = useLlmStatus();
@@ -28,9 +48,12 @@ export default function LlmPage() {
     baseURL: 'http://localhost:11434/v1',
     model: 'llama3.2',
     apiKey: '',
+    contextWindow: '',
   });
   const [saving, setSaving] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingContextId, setEditingContextId] = useState<string | null>(null);
+  const [editContextValue, setEditContextValue] = useState('');
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
 
   const fetchConfigs = useCallback(async () => {
     const res = await fetch('/api/llm/configs');
@@ -49,6 +72,9 @@ export default function LlmPage() {
     if (!form.name.trim() || !form.baseURL.trim() || !form.model.trim() || saving) return;
     setSaving(true);
     try {
+      const parsedWindow = form.contextWindow.trim()
+        ? Number(form.contextWindow.trim())
+        : undefined;
       await fetch('/api/llm/configs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -57,6 +83,9 @@ export default function LlmPage() {
           baseURL: form.baseURL.trim(),
           model: form.model.trim(),
           apiKey: form.apiKey.trim() || undefined,
+          ...(parsedWindow && Number.isFinite(parsedWindow) && parsedWindow > 0
+            ? { contextWindow: Math.floor(parsedWindow) }
+            : {}),
         }),
       });
       setForm({
@@ -64,6 +93,7 @@ export default function LlmPage() {
         baseURL: 'http://localhost:11434/v1',
         model: 'llama3.2',
         apiKey: '',
+        contextWindow: '',
       });
       await fetchConfigs();
       refreshLlmStatus();
@@ -72,15 +102,30 @@ export default function LlmPage() {
     }
   };
 
-  const updateConfig = async (id: string, updates: Partial<LlmConfig>) => {
+  const saveContextWindow = async (id: string) => {
+    const n = Number(editContextValue.trim());
+    if (!Number.isFinite(n) || n <= 0) return;
     await fetch(`/api/llm/configs/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({ contextWindow: Math.floor(n) }),
     });
+    setEditingContextId(null);
     await fetchConfigs();
-    setEditingId(null);
     refreshLlmStatus();
+  };
+
+  const refreshContextWindow = async (id: string) => {
+    setRefreshingId(id);
+    try {
+      await fetch(`/api/llm/configs/${id}/refresh-context-window`, {
+        method: 'POST',
+      });
+      await fetchConfigs();
+      refreshLlmStatus();
+    } finally {
+      setRefreshingId(null);
+    }
   };
 
   const setDefault = async (id: string) => {
@@ -108,12 +153,12 @@ export default function LlmPage() {
         <h1 className="text-2xl font-semibold">LLM 설정 관리</h1>
       </div>
 
-      {/* 설정 추가 폼 */}
       <Card>
         <CardHeader>
           <CardTitle>LLM 설정 추가</CardTitle>
           <CardDescription>
             로컬 LLM 서버(Ollama, LM Studio 등) 또는 OpenAI 호환 API를 설정할 수 있습니다.
+            Context window는 연결 시 자동 조회되며, 필요하면 수동으로 지정할 수 있습니다.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -152,6 +197,21 @@ export default function LlmPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-medium">Context window (선택)</label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="비우면 연결 시 자동 조회"
+                value={form.contextWindow}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, contextWindow: e.target.value }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                토큰 단위. 입력하면 수동(manual)으로 고정되고 자동 조회가 덮어쓰지 않습니다.
+              </p>
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium">API Key (선택사항)</label>
               <Input
                 type="password"
@@ -170,7 +230,6 @@ export default function LlmPage() {
         </CardContent>
       </Card>
 
-      {/* 설정 목록 */}
       <Card>
         <CardHeader>
           <CardTitle>LLM 설정 목록</CardTitle>
@@ -208,6 +267,39 @@ export default function LlmPage() {
                           <span className="font-medium">Model:</span>{' '}
                           <span className="font-mono">{config.model}</span>
                         </p>
+                        <div className="text-sm text-muted-foreground">
+                          <span className="font-medium">Context window:</span>{' '}
+                          {editingContextId === config.id ? (
+                            <span className="inline-flex items-center gap-2 mt-1">
+                              <Input
+                                className="h-8 w-36 font-mono"
+                                type="number"
+                                min={1}
+                                value={editContextValue}
+                                onChange={(e) => setEditContextValue(e.target.value)}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => saveContextWindow(config.id)}
+                              >
+                                저장
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingContextId(null)}
+                              >
+                                취소
+                              </Button>
+                            </span>
+                          ) : (
+                            <span className="font-mono">
+                              {formatContextWindow(config)}
+                            </span>
+                          )}
+                        </div>
                         {config.apiKey && (
                           <p className="text-xs text-muted-foreground">
                             API Key: ••••••••
@@ -216,6 +308,32 @@ export default function LlmPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditingContextId(config.id);
+                          setEditContextValue(
+                            config.contextWindow ? String(config.contextWindow) : ''
+                          );
+                        }}
+                        title="Context window 수동 수정"
+                      >
+                        수정
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={refreshingId === config.id}
+                        onClick={() => refreshContextWindow(config.id)}
+                        title="Context window 다시 조회 (수동값도 덮어씀)"
+                      >
+                        <RefreshCw
+                          className={`h-4 w-4 ${
+                            refreshingId === config.id ? 'animate-spin' : ''
+                          }`}
+                        />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"

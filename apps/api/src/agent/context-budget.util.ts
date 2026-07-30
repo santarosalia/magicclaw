@@ -14,13 +14,31 @@ export interface ContextBudgetConfig {
   safetyMargin: number;
 }
 
-export function getContextBudgetConfig(): ContextBudgetConfig {
+export function getContextBudgetConfig(options?: {
+  contextWindow?: number;
+}): ContextBudgetConfig {
   return {
-    contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 65536),
+    contextWindow: resolveContextWindow(options?.contextWindow),
     outputReserve: Number(process.env.AGENT_OUTPUT_RESERVE ?? 4096),
     toolSchemaReserve: Number(process.env.AGENT_TOOL_SCHEMA_RESERVE ?? 8192),
     safetyMargin: Number(process.env.AGENT_CONTEXT_SAFETY_MARGIN ?? 2048),
   };
+}
+
+function resolveContextWindow(configWindow?: number): number {
+  const envRaw = process.env.AGENT_CONTEXT_WINDOW;
+  if (envRaw !== undefined && envRaw !== "") {
+    const fromEnv = Number(envRaw);
+    if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+  }
+  if (
+    configWindow !== undefined &&
+    Number.isFinite(configWindow) &&
+    configWindow > 0
+  ) {
+    return Math.floor(configWindow);
+  }
+  return 65536;
 }
 
 const TRUNCATION_SUFFIX = "\n...[truncated for context limit]";
@@ -118,10 +136,15 @@ function truncateContent(content: string, maxChars: number): string {
   if (maxChars <= TRUNCATION_SUFFIX.length + 32) {
     return content.slice(0, Math.max(0, maxChars));
   }
-  return content.slice(0, maxChars - TRUNCATION_SUFFIX.length) + TRUNCATION_SUFFIX;
+  return (
+    content.slice(0, maxChars - TRUNCATION_SUFFIX.length) + TRUNCATION_SUFFIX
+  );
 }
 
-function truncateMessageToChars(message: BaseMessage, maxChars: number): BaseMessage {
+function truncateMessageToChars(
+  message: BaseMessage,
+  maxChars: number
+): BaseMessage {
   const content = getMessageContentAsString(message);
   if (content.length <= maxChars) return message;
   return cloneWithContent(message, truncateContent(content, maxChars));
@@ -156,7 +179,7 @@ function truncatePass(
   messages: BaseMessage[],
   tokenBudget: number
 ): BaseMessage[] {
-  let result = [...messages];
+  const result = [...messages];
   for (let pass = 0; pass < 12; pass++) {
     if (estimateMessagesTokens(result) <= tokenBudget) return result;
 

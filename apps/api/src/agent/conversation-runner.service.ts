@@ -111,9 +111,10 @@ ${SKILLS_GUIDANCE}`;
     llm: { invoke: ChatOpenAI["invoke"] },
     systemPrompt: string,
     messages: BaseMessage[],
-    toolsTokenEstimate = 0
+    toolsTokenEstimate = 0,
+    contextWindow?: number
   ) {
-    const config = getContextBudgetConfig();
+    const config = getContextBudgetConfig({ contextWindow });
     for (let attempt = 0; attempt < 6; attempt++) {
       const shrink = 1 - attempt * 0.12;
       const budget = Math.floor(
@@ -229,7 +230,8 @@ ${SKILLS_GUIDANCE}`;
         llmWithTools,
         systemPrompt,
         apiMessages,
-        toolsTokenEstimate
+        toolsTokenEstimate,
+        options.contextWindow
       );
 
       return {

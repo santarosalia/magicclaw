@@ -21,6 +21,7 @@ export interface TurnContext {
   systemMemoryBlock: string;
   contextFilesBlock: string;
   skillsIndexBlock: string;
+  contextWindow?: number;
   priorMessageCount: number;
 }
 
@@ -59,6 +60,7 @@ export class TurnContextService {
     const contextFilesBlock = this.contextFiles.buildContextFilesBlock();
     const skillsIndexBlock = this.skillStore.buildSkillsIndexBlock();
     const llm = this.modelFactory.create();
+    const contextWindow = this.modelFactory.getActiveContextWindow();
     const history = await this.session.ensureLoaded(sessionId);
     const compressedHistory = await this.contextCompression.maybeCompress(
       sessionId,
@@ -66,7 +68,8 @@ export class TurnContextService {
       llm,
       [systemMemoryBlock, contextFilesBlock, skillsIndexBlock]
         .filter(Boolean)
-        .join("\n\n")
+        .join("\n\n"),
+      contextWindow
     );
 
     const userMsg = new HumanMessage({ content: userText.trim() });
@@ -92,6 +95,7 @@ export class TurnContextService {
       systemMemoryBlock,
       contextFilesBlock,
       skillsIndexBlock,
+      contextWindow,
       priorMessageCount: compressedHistory.length,
     };
   }

@@ -61,6 +61,12 @@ export class LlmStoreService extends FileStoreService
 
   create(dto: CreateLlmConfigDto): LlmConfig {
     const id = randomUUID();
+    const manualWindow =
+      dto.contextWindow !== undefined &&
+      Number.isFinite(dto.contextWindow) &&
+      dto.contextWindow > 0
+        ? Math.floor(dto.contextWindow)
+        : undefined;
     const config: LlmConfig = {
       id,
       name: dto.name,
@@ -69,6 +75,13 @@ export class LlmStoreService extends FileStoreService
       apiKey: dto.apiKey,
       createdAt: new Date().toISOString(),
       isDefault: false,
+      ...(manualWindow !== undefined
+        ? {
+            contextWindow: manualWindow,
+            contextWindowSource: "manual" as const,
+            contextWindowCheckedAt: new Date().toISOString(),
+          }
+        : {}),
     };
     this.configs.set(id, config);
 
@@ -85,12 +98,51 @@ export class LlmStoreService extends FileStoreService
   update(id: string, dto: UpdateLlmConfigDto): LlmConfig | undefined {
     const existing = this.configs.get(id);
     if (!existing) return undefined;
+    const manualWindow =
+      dto.contextWindow !== undefined &&
+      Number.isFinite(dto.contextWindow) &&
+      dto.contextWindow > 0
+        ? Math.floor(dto.contextWindow)
+        : undefined;
     const updated: LlmConfig = {
       ...existing,
       ...(dto.name !== undefined && { name: dto.name }),
       ...(dto.baseURL !== undefined && { baseURL: dto.baseURL }),
       ...(dto.model !== undefined && { model: dto.model }),
       ...(dto.apiKey !== undefined && { apiKey: dto.apiKey }),
+      ...(manualWindow !== undefined
+        ? {
+            contextWindow: manualWindow,
+            contextWindowSource: "manual" as const,
+            contextWindowCheckedAt: new Date().toISOString(),
+          }
+        : {}),
+    };
+    this.configs.set(id, updated);
+    this.saveToFile();
+    return updated;
+  }
+
+  setContextWindow(
+    id: string,
+    contextWindow: number,
+    source: "api" | "heuristic" | "fallback" | "manual",
+    opts?: { force?: boolean }
+  ): LlmConfig | undefined {
+    const existing = this.configs.get(id);
+    if (!existing) return undefined;
+    if (
+      !opts?.force &&
+      existing.contextWindowSource === "manual" &&
+      source !== "manual"
+    ) {
+      return existing;
+    }
+    const updated: LlmConfig = {
+      ...existing,
+      contextWindow: Math.floor(contextWindow),
+      contextWindowSource: source,
+      contextWindowCheckedAt: new Date().toISOString(),
     };
     this.configs.set(id, updated);
     this.saveToFile();

@@ -12,12 +12,16 @@ import {
 export interface LlmStatusState {
   status: "loading" | "configured" | "not_configured" | "error";
   error?: string;
+  contextWindow?: number;
+  contextWindowSource?: string;
 }
 
 type LlmStatusResponse = {
   configured?: boolean;
   connected?: boolean;
   modelAvailable?: boolean;
+  contextWindow?: number;
+  contextWindowSource?: string;
   error?: string;
 } | null;
 
@@ -25,10 +29,16 @@ function parseLlmStatus(data: LlmStatusResponse): LlmStatusState {
   if (!data) return { status: "not_configured" };
   if (!data.configured) return { status: "not_configured" };
   if (data.connected && data.modelAvailable !== false)
-    return { status: "configured" };
+    return {
+      status: "configured",
+      contextWindow: data.contextWindow,
+      contextWindowSource: data.contextWindowSource,
+    };
   return {
     status: "error",
     error: data.error ?? "연결할 수 없습니다.",
+    contextWindow: data.contextWindow,
+    contextWindowSource: data.contextWindowSource,
   };
 }
 

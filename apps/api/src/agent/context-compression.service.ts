@@ -25,11 +25,12 @@ export class ContextCompressionService {
     sessionId: string,
     messages: BaseMessage[],
     llm?: ChatOpenAI,
-    systemOverhead = ""
+    systemOverhead = "",
+    contextWindow?: number
   ): Promise<BaseMessage[]> {
     const maxMessages = this.configStore.getConfig().maxContextMessages;
     if (messages.length <= maxMessages) {
-      return this.trimToTokenBudget(messages, systemOverhead);
+      return this.trimToTokenBudget(messages, systemOverhead, contextWindow);
     }
 
     await this.memoryManager.onPreCompress(sessionId);
@@ -40,7 +41,11 @@ export class ContextCompressionService {
     const middle = messages.slice(2, messages.length - keepCount);
 
     if (middle.length === 0 || !llm) {
-      return this.trimToTokenBudget([...head, ...tail], systemOverhead);
+      return this.trimToTokenBudget(
+        [...head, ...tail],
+        systemOverhead,
+        contextWindow
+      );
     }
 
     const summaryPrompt = [
@@ -60,7 +65,11 @@ export class ContextCompressionService {
       ]);
       const summary = getMessageContentAsString(response).trim();
       if (!summary) {
-        return this.trimToTokenBudget([...head, ...tail], systemOverhead);
+        return this.trimToTokenBudget(
+          [...head, ...tail],
+          systemOverhead,
+          contextWindow
+        );
       }
       const compressed = new HumanMessage({
         content: `[Compressed context from earlier turns]\n${summary}`,
@@ -73,17 +82,22 @@ export class ContextCompressionService {
             ...tail,
           ]
         : [...head, compressed, ...tail];
-      return this.trimToTokenBudget(withTodos, systemOverhead);
+      return this.trimToTokenBudget(withTodos, systemOverhead, contextWindow);
     } catch {
-      return this.trimToTokenBudget([...head, ...tail], systemOverhead);
+      return this.trimToTokenBudget(
+        [...head, ...tail],
+        systemOverhead,
+        contextWindow
+      );
     }
   }
 
   private trimToTokenBudget(
     messages: BaseMessage[],
-    systemOverhead: string
+    systemOverhead: string,
+    contextWindow?: number
   ): BaseMessage[] {
-    const config = getContextBudgetConfig();
+    const config = getContextBudgetConfig({ contextWindow });
     const budget = computeMessageTokenBudget(
       config,
       [systemOverhead],

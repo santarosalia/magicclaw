@@ -21,6 +21,8 @@ interface ConnectionStatusProps {
   socketStatus: SocketStatus;
   llmStatus: LlmStatus;
   llmError?: string;
+  llmContextWindow?: number;
+  llmContextWindowSource?: string;
   mcpStatus?: McpStatus;
   mcpServers?: McpServerStatusItem[];
   className?: string;
@@ -30,6 +32,8 @@ export function ConnectionStatus({
   socketStatus,
   llmStatus,
   llmError,
+  llmContextWindow,
+  llmContextWindowSource,
   mcpStatus = "none",
   mcpServers = [],
   className,
@@ -41,14 +45,33 @@ export function ConnectionStatus({
         ? "API 연결됨"
         : "API 끊김";
 
+  const contextHint =
+    llmContextWindow && llmStatus === "configured"
+      ? ` · ${llmContextWindow.toLocaleString()} tok${
+          llmContextWindowSource === "fallback" ||
+          llmContextWindowSource === "heuristic"
+            ? "≈"
+            : ""
+        }`
+      : "";
+
   const llmLabel =
     llmStatus === "loading"
       ? "LLM 확인 중..."
       : llmStatus === "configured"
-        ? "LLM 연결됨"
+        ? `LLM 연결됨${contextHint}`
         : llmStatus === "error"
           ? "LLM 오류"
           : "LLM 미설정";
+
+  const llmTitle = [
+    llmError,
+    llmContextWindow
+      ? `Context window: ${llmContextWindow.toLocaleString()} (${llmContextWindowSource ?? "unknown"})`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const errorServers = mcpServers.filter(
     (s) => s.enabled !== false && s.status === "error"
@@ -100,7 +123,7 @@ export function ConnectionStatus({
       </Badge>
       <Badge
         variant="outline"
-        title={llmError}
+        title={llmTitle || undefined}
         className={cn(
           "gap-1.5 font-normal",
           llmStatus === "configured" &&

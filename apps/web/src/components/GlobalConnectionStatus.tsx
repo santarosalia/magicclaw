@@ -47,6 +47,8 @@ export function GlobalConnectionStatus() {
         }
         llmStatus={llmState.status}
         llmError={llmState.error}
+        llmContextWindow={llmState.contextWindow}
+        llmContextWindowSource={llmState.contextWindowSource}
         mcpStatus={mcpStatus}
         mcpServers={mcpServers ?? []}
       />

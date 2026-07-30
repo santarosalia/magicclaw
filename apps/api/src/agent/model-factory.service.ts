@@ -32,4 +32,13 @@ export class ModelFactoryService {
         : undefined,
     });
   }
+
+  /** Cached context window from the active LLM config, if known. */
+  getActiveContextWindow(): number | undefined {
+    const window = this.llmStore.findDefault()?.contextWindow;
+    if (window !== undefined && Number.isFinite(window) && window > 0) {
+      return Math.floor(window);
+    }
+    return undefined;
+  }
 }

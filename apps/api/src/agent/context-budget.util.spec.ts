@@ -60,4 +60,31 @@ describe("context-budget.util", () => {
     expect(budget).toBeLessThan(config.contextWindow);
     expect(budget).toBeGreaterThan(0);
   });
+
+  describe("getContextBudgetConfig priority", () => {
+    const prev = process.env.AGENT_CONTEXT_WINDOW;
+
+    afterEach(() => {
+      if (prev === undefined) delete process.env.AGENT_CONTEXT_WINDOW;
+      else process.env.AGENT_CONTEXT_WINDOW = prev;
+    });
+
+    it("uses AGENT_CONTEXT_WINDOW env over config value", () => {
+      process.env.AGENT_CONTEXT_WINDOW = "99999";
+      const config = getContextBudgetConfig({ contextWindow: 32000 });
+      expect(config.contextWindow).toBe(99999);
+    });
+
+    it("uses active config contextWindow when env is unset", () => {
+      delete process.env.AGENT_CONTEXT_WINDOW;
+      const config = getContextBudgetConfig({ contextWindow: 32000 });
+      expect(config.contextWindow).toBe(32000);
+    });
+
+    it("falls back to 65536 when env and config are unset", () => {
+      delete process.env.AGENT_CONTEXT_WINDOW;
+      const config = getContextBudgetConfig();
+      expect(config.contextWindow).toBe(65536);
+    });
+  });
 });
