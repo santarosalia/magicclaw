@@ -7,10 +7,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import type { ChatMessage } from "@/lib/agent-socket-context";
 import { IntermediateThoughts } from "@/components/chat/IntermediateThoughts";
-import {
-  splitModelThinkBlocks,
-  toPlainThoughtText,
-} from "@/lib/model-think";
+import { splitModelThinkBlocks, toPlainThoughtText } from "@/lib/model-think";
 
 const markdownPlugins = {
   remark: [remarkGfm],
@@ -82,8 +79,8 @@ export const ChatMessageList = memo(function ChatMessageList({
   const thoughtsLive = !loading
     ? ""
     : !streamAsAnswer
-      ? toPlainThoughtText(streamingContent)
-      : streamSplit.thinkingParts.join("\n\n");
+    ? toPlainThoughtText(streamingContent)
+    : streamSplit.thinkingParts.join("\n\n");
   const answerLive =
     loading && streamAsAnswer && streamSplit.answer ? streamSplit.answer : "";
 
@@ -124,8 +121,8 @@ export const ChatMessageList = memo(function ChatMessageList({
             {connecting
               ? "서버에 연결 중..."
               : connected
-                ? "응답 중..."
-                : "연결이 끊어졌습니다."}
+              ? "응답 중..."
+              : "연결이 끊어졌습니다."}
           </span>
         </div>
       ) : null}

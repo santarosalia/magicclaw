@@ -258,16 +258,11 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
             ""
           ).trim();
           const { thinkingParts, answer } = splitModelThinkBlocks(rawFinal);
-          const intermediate = [
-            ...live.intermediateMessages,
-            ...thinkingParts,
-          ];
+          const intermediate = [...live.intermediateMessages, ...thinkingParts];
           const assistantMessage: ChatMessage = {
             role: "assistant",
-            content:
-              answer || (thinkingParts.length === 0 ? rawFinal : ""),
-            intermediate:
-              intermediate.length > 0 ? intermediate : undefined,
+            content: answer || (thinkingParts.length === 0 ? rawFinal : ""),
+            intermediate: intermediate.length > 0 ? intermediate : undefined,
           };
 
           liveTurnsRef.current.delete(sessionId);

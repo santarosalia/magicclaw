@@ -11,11 +11,14 @@ export function splitModelThinkBlocks(content: string): {
   const thinkingParts: string[] = [];
   let remaining = content;
 
-  remaining = remaining.replace(CLOSED_THINK_RE, (_full, _tag, inner: string) => {
-    const trimmed = inner.trim();
-    if (trimmed) thinkingParts.push(trimmed);
-    return "";
-  });
+  remaining = remaining.replace(
+    CLOSED_THINK_RE,
+    (_full, _tag, inner: string) => {
+      const trimmed = inner.trim();
+      if (trimmed) thinkingParts.push(trimmed);
+      return "";
+    }
+  );
 
   const orphan = remaining.match(ORPHAN_CLOSE_RE);
   if (orphan) {
