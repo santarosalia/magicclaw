@@ -20,6 +20,7 @@ import {
   type SessionRecord,
 } from "@/lib/sessions-api";
 import { hydrateSessionMessages } from "@/lib/session-messages";
+import { splitModelThinkBlocks } from "@/lib/model-think";
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -201,19 +202,25 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           });
           break;
         case "final_message": {
-          const finalText = (
+          const rawFinal = (
             streamingContentRef.current.trim() ||
             event.message ||
             ""
           ).trim();
-          const intermediate = intermediateMessagesRef.current;
+          const { thinkingParts, answer } = splitModelThinkBlocks(rawFinal);
+          const intermediate = [
+            ...intermediateMessagesRef.current,
+            ...thinkingParts,
+          ];
           setMessages((msgs) => [
             ...msgs,
             {
               role: "assistant",
-              content: finalText,
+              content:
+                answer ||
+                (thinkingParts.length === 0 ? rawFinal : ""),
               intermediate:
-                intermediate.length > 0 ? [...intermediate] : undefined,
+                intermediate.length > 0 ? intermediate : undefined,
             },
           ]);
           clearStreaming();

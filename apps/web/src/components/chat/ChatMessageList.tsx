@@ -7,6 +7,10 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import type { ChatMessage } from "@/lib/agent-socket-context";
 import { IntermediateThoughts } from "@/components/chat/IntermediateThoughts";
+import {
+  splitModelThinkBlocks,
+  toPlainThoughtText,
+} from "@/lib/model-think";
 
 const markdownPlugins = {
   remark: [remarkGfm],
@@ -26,21 +30,28 @@ const ChatBubble = memo(function ChatBubble({
     );
   }
 
+  const { thinkingParts, answer } = splitModelThinkBlocks(message.content);
+  const thoughts = [...(message.intermediate ?? []), ...thinkingParts].filter(
+    Boolean
+  );
+
   return (
     <div className="mr-auto max-w-[85%] space-y-2">
-      {message.intermediate && message.intermediate.length > 0 ? (
-        <IntermediateThoughts items={message.intermediate} className="w-full" />
+      {thoughts.length > 0 ? (
+        <IntermediateThoughts items={thoughts} className="w-full" />
       ) : null}
-      <div className="rounded-lg border bg-card px-4 py-2">
-        <div className="markdown-content prose prose-invert max-w-none">
-          <ReactMarkdown
-            remarkPlugins={markdownPlugins.remark}
-            rehypePlugins={markdownPlugins.rehype}
-          >
-            {message.content}
-          </ReactMarkdown>
+      {answer ? (
+        <div className="rounded-lg border bg-card px-4 py-2">
+          <div className="markdown-content prose prose-invert max-w-none">
+            <ReactMarkdown
+              remarkPlugins={markdownPlugins.remark}
+              rehypePlugins={markdownPlugins.rehype}
+            >
+              {answer}
+            </ReactMarkdown>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 });
@@ -67,10 +78,14 @@ export const ChatMessageList = memo(function ChatMessageList({
   connected,
   messagesEndRef,
 }: ChatMessageListProps) {
-  const thoughtsLive =
-    loading && streamingContent && !streamAsAnswer ? streamingContent : "";
+  const streamSplit = splitModelThinkBlocks(streamingContent);
+  const thoughtsLive = !loading
+    ? ""
+    : !streamAsAnswer
+      ? toPlainThoughtText(streamingContent)
+      : streamSplit.thinkingParts.join("\n\n");
   const answerLive =
-    loading && streamingContent && streamAsAnswer ? streamingContent : "";
+    loading && streamAsAnswer && streamSplit.answer ? streamSplit.answer : "";
 
   return (
     <>
