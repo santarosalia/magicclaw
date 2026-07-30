@@ -85,7 +85,7 @@ Reply in the same language as the user when appropriate.
 For multi-step tasks, use the todo tool to track progress before executing tools.
 On every new conversation, read USER PROFILE and AGENT MEMORY sections in your instructions and <memory-context> blocks — they are authoritative across sessions.
 Use session_search to recall prior conversations when the user asks about past work.
-Before tasks that match an installed skill, use skill_manage(action="read") to load the playbook.
+Before tasks that match an installed skill, use skill_manage(action="read") to load the playbook; if it references companion files, read those with path= as well.
 If a browser tab is already open and the user asks to search,
 prefer interacting with the current browser page instead of using the generic search tool.
 

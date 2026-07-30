@@ -48,7 +48,7 @@ export class SkillStoreService {
     const lines = skills.map(
       (s) => `- ${s.name} (${s.category}): ${s.description || "no description"}`
     );
-    return `## INSTALLED SKILLS\nUse skill_manage(action="read", name="...") to load full instructions before matching work.\n${lines.join(
+    return `## INSTALLED SKILLS\nUse skill_manage(action="read", name="...") to load SKILL.md before matching work. If SKILL.md links to other files, read them with path="relative/file" (or action="files" to list).\n${lines.join(
       "\n"
     )}`;
   }
@@ -57,22 +57,53 @@ export class SkillStoreService {
     return this.findSkillDir(name);
   }
 
-  readSkill(name: string): {
+  readSkill(
+    name: string,
+    relativePath?: string
+  ): {
     success: boolean;
     content?: string;
+    path?: string;
+    files?: string[];
     error?: string;
   } {
     const skillDir = this.findSkillDir(name);
     if (!skillDir) {
       return { success: false, error: `Skill '${name}' not found.` };
     }
-    const skillPath = join(skillDir, "SKILL.md");
-    const content = readFileSync(skillPath, "utf8");
+
+    const targetRel = (relativePath?.trim() || "SKILL.md").replace(/\\/g, "/");
+    const resolved = this.resolveSkillFile(skillDir, targetRel);
+    if (!resolved.ok) {
+      return { success: false, error: resolved.error };
+    }
+    if (!existsSync(resolved.absPath) || !statSync(resolved.absPath).isFile()) {
+      return {
+        success: false,
+        error: `File '${resolved.relPath}' not found in skill '${name}'.`,
+      };
+    }
+
+    const content = readFileSync(resolved.absPath, "utf8");
     this.usage?.bumpView(name);
     return {
       success: true,
       content,
+      path: resolved.relPath,
+      files: this.collectSkillFiles(skillDir),
     };
+  }
+
+  listSkillFiles(name: string): {
+    success: boolean;
+    files?: string[];
+    error?: string;
+  } {
+    const skillDir = this.findSkillDir(name);
+    if (!skillDir) {
+      return { success: false, error: `Skill '${name}' not found.` };
+    }
+    return { success: true, files: this.collectSkillFiles(skillDir) };
   }
 
   createSkill(input: {
@@ -298,5 +329,74 @@ ${trimmedBody}
     const root = resolve(this.skillsRoot());
     const resolved = resolve(skillDir);
     return resolved === root || resolved.startsWith(`${root}/`);
+  }
+
+  private isInsideDir(rootDir: string, candidate: string): boolean {
+    const root = resolve(rootDir);
+    const resolved = resolve(candidate);
+    return resolved === root || resolved.startsWith(`${root}/`);
+  }
+
+  private resolveSkillFile(
+    skillDir: string,
+    relativePath: string
+  ):
+    | { ok: true; absPath: string; relPath: string }
+    | { ok: false; error: string } {
+    const trimmed = relativePath.trim();
+    if (!trimmed || trimmed.startsWith("/") || /^[A-Za-z]:[\\/]/.test(trimmed)) {
+      return {
+        ok: false,
+        error: "Invalid path: use a relative path inside the skill directory.",
+      };
+    }
+    if (trimmed.split("/").some((seg) => seg === "..")) {
+      return {
+        ok: false,
+        error: "Refusing path that escapes the skill directory.",
+      };
+    }
+
+    const absPath = resolve(skillDir, trimmed);
+    if (!this.isInsideDir(skillDir, absPath)) {
+      return {
+        ok: false,
+        error: "Refusing path that escapes the skill directory.",
+      };
+    }
+
+    return {
+      ok: true,
+      absPath,
+      relPath: relative(skillDir, absPath).replace(/\\/g, "/"),
+    };
+  }
+
+  private collectSkillFiles(skillDir: string): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.startsWith(".")) continue;
+        const full = join(dir, entry);
+        try {
+          const st = statSync(full);
+          if (st.isDirectory()) {
+            walk(full);
+          } else if (st.isFile()) {
+            out.push(relative(skillDir, full).replace(/\\/g, "/"));
+          }
+        } catch {
+          // skip unreadable
+        }
+      }
+    };
+    walk(skillDir);
+    return out.sort((a, b) => a.localeCompare(b));
   }
 }

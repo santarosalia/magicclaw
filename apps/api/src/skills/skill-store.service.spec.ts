@@ -101,4 +101,81 @@ description: >
     expect(store.listSkills()).toHaveLength(0);
     expect(usage.getRecord("deploy-api")).toBeNull();
   });
+
+  it("reads companion files by relative path and lists skill files", () => {
+    const skillDir = join(home, "skills", "user", "db-query");
+    mkdirSync(join(skillDir, "references"), { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: db-query
+description: Query the database.
+---
+
+See [catalog.md](catalog.md) and [references/notes.md](references/notes.md).
+`,
+      "utf8"
+    );
+    writeFileSync(join(skillDir, "catalog.md"), "# Catalog\nsoft-delete rules\n", "utf8");
+    writeFileSync(
+      join(skillDir, "references", "notes.md"),
+      "# Notes\njoin parents\n",
+      "utf8"
+    );
+
+    const store = new SkillStoreService(new SkillUsageService());
+
+    const root = store.readSkill("db-query");
+    expect(root.success).toBe(true);
+    expect(root.path).toBe("SKILL.md");
+    expect(root.content).toContain("catalog.md");
+    expect(root.files).toEqual(
+      expect.arrayContaining(["SKILL.md", "catalog.md", "references/notes.md"])
+    );
+
+    const catalog = store.readSkill("db-query", "catalog.md");
+    expect(catalog.success).toBe(true);
+    expect(catalog.path).toBe("catalog.md");
+    expect(catalog.content).toContain("soft-delete rules");
+    expect(catalog.files).toEqual(
+      expect.arrayContaining(["SKILL.md", "catalog.md", "references/notes.md"])
+    );
+
+    const nested = store.readSkill("db-query", "references/notes.md");
+    expect(nested.success).toBe(true);
+    expect(nested.content).toContain("join parents");
+
+    const listed = store.listSkillFiles("db-query");
+    expect(listed.success).toBe(true);
+    expect(listed.files).toEqual(
+      expect.arrayContaining(["SKILL.md", "catalog.md", "references/notes.md"])
+    );
+  });
+
+  it("rejects path traversal and missing companion files", () => {
+    const skillDir = join(home, "skills", "safe");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: safe
+description: Safe skill.
+---
+
+# Safe
+`,
+      "utf8"
+    );
+    writeFileSync(join(home, "outside.txt"), "secret", "utf8");
+
+    const store = new SkillStoreService(new SkillUsageService());
+
+    const escape = store.readSkill("safe", "../outside.txt");
+    expect(escape.success).toBe(false);
+    expect(escape.error).toMatch(/outside|refusing|invalid/i);
+
+    const missing = store.readSkill("safe", "catalog.md");
+    expect(missing.success).toBe(false);
+    expect(missing.error).toMatch(/not found/i);
+  });
 });

@@ -10,6 +10,7 @@ WHEN to create a skill:
 WHEN to read a skill:
 - Before starting work that matches an installed skill name or description
 - When the user references a skill by name
+- After loading SKILL.md, if it links to companion files (catalog.md, query-guide.md, references/...), load them with skill_manage(action="read", name="...", path="...") before proceeding. Use action="files" to list available paths.
 
 Install community skills with skill_manage(action="install", identifier="owner/repo/path").
 Hub-installed skills are protected from curator archival.
@@ -18,4 +19,5 @@ HOW to write skills:
 - SKILL.md frontmatter: name, description (≤60 chars, one sentence, ends with period)
 - Body: When to Use, Prerequisites, How to Run, Procedure, Pitfalls, Verification
 - Keep skills focused — one capability per skill
-- Prefer updating an existing skill over duplicating`;
+- Prefer updating an existing skill over duplicating
+- Put large reference material in companion files next to SKILL.md and link them; readers must load those paths too`;

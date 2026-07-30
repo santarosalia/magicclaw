@@ -7,7 +7,8 @@ const SKILL_MANAGE_DESCRIPTION = `Create, read, update, and delete agent skills 
 
 ACTIONS:
 - list (default): installed skills with names and descriptions
-- read: load full SKILL.md by name
+- read: load a file from a skill directory (default: SKILL.md). Pass path for companions (e.g. catalog.md, references/notes.md). Response includes files[] listing other readable paths.
+- files: list files inside a skill directory
 - create: new skill (name, description, content; optional category)
 - edit: full SKILL.md rewrite
 - patch: find-and-replace in SKILL.md (old_text → new_text)
@@ -16,6 +17,7 @@ ACTIONS:
 - uninstall: remove hub-installed skill
 - hub_list: list hub-installed skills from lock file
 
+When SKILL.md links to other files, read them with path before following procedures.
 Skills are procedural memory ("how to deploy X"); use memory tool for declarative facts ("user prefers Korean").`;
 
 export function createSkillManageTool(
@@ -30,6 +32,7 @@ export function createSkillManageTool(
         .enum([
           "list",
           "read",
+          "files",
           "create",
           "edit",
           "patch",
@@ -43,7 +46,13 @@ export function createSkillManageTool(
       name: z
         .string()
         .optional()
-        .describe("Skill name for read/edit/patch/delete/uninstall."),
+        .describe("Skill name for read/files/edit/patch/delete/uninstall."),
+      path: z
+        .string()
+        .optional()
+        .describe(
+          'Relative file inside the skill directory for read (default: "SKILL.md"). Examples: catalog.md, query-guide.md, references/notes.md.'
+        ),
       description: z
         .string()
         .optional()
@@ -70,6 +79,7 @@ export function createSkillManageTool(
     func: async ({
       action = "list",
       name,
+      path,
       description,
       content,
       category,
@@ -83,6 +93,14 @@ export function createSkillManageTool(
           return JSON.stringify({ skills: skillStore.listSkills() });
         case "hub_list":
           return JSON.stringify({ installed: skillsHub.listInstalled() });
+        case "files":
+          if (!name?.trim()) {
+            return JSON.stringify({
+              success: false,
+              error: "name is required.",
+            });
+          }
+          return JSON.stringify(skillStore.listSkillFiles(name));
         case "read":
           if (!name?.trim()) {
             return JSON.stringify({
@@ -90,7 +108,7 @@ export function createSkillManageTool(
               error: "name is required.",
             });
           }
-          return JSON.stringify(skillStore.readSkill(name));
+          return JSON.stringify(skillStore.readSkill(name, path));
         case "install": {
           if (!identifier?.trim()) {
             return JSON.stringify({
