@@ -5,10 +5,11 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ToolCallFlow } from "@/components/ToolCallFlow";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
+import { TodoPanel } from "@/components/chat/TodoPanel";
+import { ToolTrail } from "@/components/chat/ToolTrail";
 import { useAgentSocket } from "@/lib/useAgentSocket";
 import {
   deleteSession,
@@ -155,12 +156,13 @@ export default function ChatPage() {
               messagesEndRef={messagesEndRef}
             />
           </CardContent>
+          <TodoPanel className="mx-4 mt-3 shrink-0" />
           <ChatComposer disabled={loading} onSend={send} />
         </Card>
 
-        <Card className="overflow-hidden flex-1 h-full">
-          <CardContent className="p-2 h-full flex flex-col">
-            <ToolCallFlow className="w-full rounded-md flex-1" />
+        <Card className="overflow-hidden flex-1 h-full min-w-0">
+          <CardContent className="p-3 h-full flex flex-col min-h-0">
+            <ToolTrail className="flex-1 min-h-0" />
           </CardContent>
         </Card>
       </div>

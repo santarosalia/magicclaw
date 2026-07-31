@@ -1,7 +1,6 @@
 "use client";
 
 import { ToolCall, ToolMessage } from "langchain";
-import { load } from "@langchain/core/load";
 import {
   createContext,
   useCallback,
@@ -231,9 +230,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
           break;
         case "tool_message":
           if (isActive) {
-            load<ToolMessage>(JSON.stringify(event.toolMessage)).then((tm) =>
-              addToolMessage(tm)
-            );
+            addToolMessage(event.toolMessage as ToolMessage);
           }
           break;
         case "intermediate_message": {

@@ -166,13 +166,102 @@ export function shrinkMessagesToBudget(
   messages: BaseMessage[],
   tokenBudget: number
 ): BaseMessage[] {
-  let result = truncatePass([...messages], tokenBudget);
+  let result = repairToolCallPairs(truncatePass([...messages], tokenBudget));
   if (estimateMessagesTokens(result) <= tokenBudget) return result;
 
-  result = trimMessagesToTokenBudget(result, tokenBudget);
+  result = repairToolCallPairs(trimMessagesToTokenBudget(result, tokenBudget));
   if (estimateMessagesTokens(result) <= tokenBudget) return result;
 
-  return truncatePass(result, tokenBudget);
+  return repairToolCallPairs(truncatePass(result, tokenBudget));
+}
+
+/**
+ * Ensure every AIMessage.tool_calls id has a following ToolMessage, and drop
+ * orphan ToolMessages. Prevents OpenAI 400 "No tool output found for function call".
+ *
+ * Also strips Responses API raw `response_metadata.output` so LangChain rebuilds
+ * function_call items from tool_calls + ToolMessages (raw output replay can leave
+ * unpaired function_calls when history was trimmed or stubs were inserted).
+ */
+export function repairToolCallPairs(messages: BaseMessage[]): BaseMessage[] {
+  const pending = new Map<
+    string,
+    { name?: string; insertAfterIndex: number }
+  >();
+  const satisfied = new Set<string>();
+  const result: BaseMessage[] = [];
+
+  for (const message of messages) {
+    if (message instanceof AIMessage && message.tool_calls?.length) {
+      result.push(stripResponsesRawOutput(message));
+      const insertAfter = result.length - 1;
+      for (const toolCall of message.tool_calls) {
+        const id = toolCall.id?.trim();
+        if (!id) continue;
+        pending.set(id, { name: toolCall.name, insertAfterIndex: insertAfter });
+      }
+      continue;
+    }
+
+    if (message instanceof ToolMessage) {
+      const id = message.tool_call_id?.trim();
+      if (!id || (!pending.has(id) && !satisfied.has(id))) {
+        // Orphan tool output — drop.
+        continue;
+      }
+      pending.delete(id);
+      satisfied.add(id);
+      result.push(message);
+      continue;
+    }
+
+    // Flush stubs for any still-pending tool calls before a non-tool message.
+    flushMissingToolOutputs(result, pending, satisfied);
+    result.push(message);
+  }
+
+  flushMissingToolOutputs(result, pending, satisfied);
+  return result;
+}
+
+function stripResponsesRawOutput(message: AIMessage): AIMessage {
+  const meta = message.response_metadata as
+    | Record<string, unknown>
+    | undefined;
+  if (!meta || !("output" in meta)) return message;
+  const { output: _output, ...rest } = meta;
+  return new AIMessage({
+    content: message.content,
+    tool_calls: message.tool_calls,
+    invalid_tool_calls: message.invalid_tool_calls,
+    additional_kwargs: message.additional_kwargs,
+    response_metadata: rest,
+    id: message.id,
+  });
+}
+
+function flushMissingToolOutputs(
+  result: BaseMessage[],
+  pending: Map<string, { name?: string; insertAfterIndex: number }>,
+  satisfied: Set<string>
+): void {
+  if (pending.size === 0) return;
+  // Insert stubs in stable order right after their AI message group.
+  // Simpler approach: append stubs at current end (after the AI + any
+  // existing tools) which is correct when we flush before the next human/ai.
+  const missing = [...pending.entries()];
+  pending.clear();
+  for (const [id, meta] of missing) {
+    if (satisfied.has(id)) continue;
+    result.push(
+      new ToolMessage({
+        content: "[tool result unavailable — omitted from context]",
+        tool_call_id: id,
+        name: meta.name,
+      })
+    );
+    satisfied.add(id);
+  }
 }
 
 function truncatePass(

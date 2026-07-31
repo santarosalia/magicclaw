@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, RefreshCw, Trash2, Star, StarOff } from 'lucide-react';
+import { ArrowLeft, Pencil, RefreshCw, Trash2, Star, StarOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,22 @@ type LlmConfig = {
   contextWindowCheckedAt?: string;
 };
 
+type LlmFormState = {
+  name: string;
+  baseURL: string;
+  model: string;
+  apiKey: string;
+  contextWindow: string;
+};
+
+const EMPTY_FORM: LlmFormState = {
+  name: '',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'llama3.2',
+  apiKey: '',
+  contextWindow: '',
+};
+
 const SOURCE_LABEL: Record<ContextWindowSource, string> = {
   api: 'API',
   heuristic: '추정',
@@ -43,16 +59,9 @@ export default function LlmPage() {
   const { refreshLlmStatus } = useLlmStatus();
   const [configs, setConfigs] = useState<LlmConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
-    name: '',
-    baseURL: 'http://localhost:11434/v1',
-    model: 'llama3.2',
-    apiKey: '',
-    contextWindow: '',
-  });
+  const [form, setForm] = useState<LlmFormState>(EMPTY_FORM);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [editingContextId, setEditingContextId] = useState<string | null>(null);
-  const [editContextValue, setEditContextValue] = useState('');
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
 
   const fetchConfigs = useCallback(async () => {
@@ -67,7 +76,24 @@ export default function LlmPage() {
     fetchConfigs().finally(() => setLoading(false));
   }, [fetchConfigs]);
 
-  const addConfig = async (e: React.FormEvent) => {
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  };
+
+  const startEdit = (config: LlmConfig) => {
+    setEditingId(config.id);
+    setForm({
+      name: config.name,
+      baseURL: config.baseURL,
+      model: config.model,
+      apiKey: '',
+      contextWindow: config.contextWindow ? String(config.contextWindow) : '',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const saveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.baseURL.trim() || !form.model.trim() || saving) return;
     setSaving(true);
@@ -75,44 +101,36 @@ export default function LlmPage() {
       const parsedWindow = form.contextWindow.trim()
         ? Number(form.contextWindow.trim())
         : undefined;
-      await fetch('/api/llm/configs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          baseURL: form.baseURL.trim(),
-          model: form.model.trim(),
-          apiKey: form.apiKey.trim() || undefined,
-          ...(parsedWindow && Number.isFinite(parsedWindow) && parsedWindow > 0
-            ? { contextWindow: Math.floor(parsedWindow) }
-            : {}),
-        }),
-      });
-      setForm({
-        name: '',
-        baseURL: 'http://localhost:11434/v1',
-        model: 'llama3.2',
-        apiKey: '',
-        contextWindow: '',
-      });
+      const payload = {
+        name: form.name.trim(),
+        baseURL: form.baseURL.trim(),
+        model: form.model.trim(),
+        ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
+        ...(parsedWindow && Number.isFinite(parsedWindow) && parsedWindow > 0
+          ? { contextWindow: Math.floor(parsedWindow) }
+          : {}),
+      };
+
+      if (editingId) {
+        await fetch(`/api/llm/configs/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await fetch('/api/llm/configs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      resetForm();
       await fetchConfigs();
       refreshLlmStatus();
     } finally {
       setSaving(false);
     }
-  };
-
-  const saveContextWindow = async (id: string) => {
-    const n = Number(editContextValue.trim());
-    if (!Number.isFinite(n) || n <= 0) return;
-    await fetch(`/api/llm/configs/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contextWindow: Math.floor(n) }),
-    });
-    setEditingContextId(null);
-    await fetchConfigs();
-    refreshLlmStatus();
   };
 
   const refreshContextWindow = async (id: string) => {
@@ -138,9 +156,13 @@ export default function LlmPage() {
   const removeConfig = async (id: string) => {
     if (!confirm('이 LLM 설정을 삭제할까요?')) return;
     await fetch(`/api/llm/configs/${id}`, { method: 'DELETE' });
+    if (editingId === id) resetForm();
     await fetchConfigs();
     refreshLlmStatus();
   };
+
+  const canSubmit =
+    !saving && !!form.name.trim() && !!form.baseURL.trim() && !!form.model.trim();
 
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-8">
@@ -155,14 +177,14 @@ export default function LlmPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>LLM 설정 추가</CardTitle>
+          <CardTitle>{editingId ? 'LLM 설정 수정' : 'LLM 설정 추가'}</CardTitle>
           <CardDescription>
             로컬 LLM 서버(Ollama, LM Studio 등) 또는 OpenAI 호환 API를 설정할 수 있습니다.
             Context window는 연결 시 자동 조회되며, 필요하면 수동으로 지정할 수 있습니다.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={addConfig} className="space-y-4">
+          <form onSubmit={saveConfig} className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">이름</label>
               <Input
@@ -215,17 +237,29 @@ export default function LlmPage() {
               <label className="text-sm font-medium">API Key (선택사항)</label>
               <Input
                 type="password"
-                placeholder="API 키가 필요한 경우 입력"
+                placeholder={
+                  editingId
+                    ? '변경할 때만 입력 (비우면 기존 키 유지)'
+                    : 'API 키가 필요한 경우 입력'
+                }
                 value={form.apiKey}
                 onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                autoComplete="off"
               />
               <p className="text-xs text-muted-foreground">
                 로컬 LLM의 경우 대부분 필요 없습니다.
               </p>
             </div>
-            <Button type="submit" disabled={saving || !form.name.trim() || !form.baseURL.trim() || !form.model.trim()}>
-              추가
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button type="submit" disabled={!canSubmit}>
+                {editingId ? '저장' : '추가'}
+              </Button>
+              {editingId ? (
+                <Button type="button" variant="ghost" onClick={resetForm}>
+                  취소
+                </Button>
+              ) : null}
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -248,7 +282,11 @@ export default function LlmPage() {
             <ul className="space-y-3">
               {configs.map((config) => (
                 <li key={config.id}>
-                  <div className="flex items-start justify-between gap-4 rounded-lg border bg-card p-4">
+                  <div
+                    className={`flex items-start justify-between gap-4 rounded-lg border bg-card p-4 ${
+                      editingId === config.id ? 'border-primary ring-1 ring-primary/30' : ''
+                    }`}
+                  >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold">{config.name}</span>
@@ -257,6 +295,11 @@ export default function LlmPage() {
                             기본값
                           </Badge>
                         )}
+                        {editingId === config.id ? (
+                          <Badge variant="outline" className="text-xs">
+                            수정 중
+                          </Badge>
+                        ) : null}
                       </div>
                       <div className="mt-2 space-y-1">
                         <p className="text-sm text-muted-foreground">
@@ -267,39 +310,10 @@ export default function LlmPage() {
                           <span className="font-medium">Model:</span>{' '}
                           <span className="font-mono">{config.model}</span>
                         </p>
-                        <div className="text-sm text-muted-foreground">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Context window:</span>{' '}
-                          {editingContextId === config.id ? (
-                            <span className="inline-flex items-center gap-2 mt-1">
-                              <Input
-                                className="h-8 w-36 font-mono"
-                                type="number"
-                                min={1}
-                                value={editContextValue}
-                                onChange={(e) => setEditContextValue(e.target.value)}
-                              />
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => saveContextWindow(config.id)}
-                              >
-                                저장
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setEditingContextId(null)}
-                              >
-                                취소
-                              </Button>
-                            </span>
-                          ) : (
-                            <span className="font-mono">
-                              {formatContextWindow(config)}
-                            </span>
-                          )}
-                        </div>
+                          <span className="font-mono">{formatContextWindow(config)}</span>
+                        </p>
                         {config.apiKey && (
                           <p className="text-xs text-muted-foreground">
                             API Key: ••••••••
@@ -311,15 +325,10 @@ export default function LlmPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setEditingContextId(config.id);
-                          setEditContextValue(
-                            config.contextWindow ? String(config.contextWindow) : ''
-                          );
-                        }}
-                        title="Context window 수동 수정"
+                        onClick={() => startEdit(config)}
+                        title="설정 수정"
                       >
-                        수정
+                        <Pencil className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
