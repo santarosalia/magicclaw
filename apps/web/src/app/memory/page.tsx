@@ -380,7 +380,7 @@ export default function MemoryPage() {
 
                   <p className="text-xs text-muted-foreground">
                     설정 저장 후 mem0 버튼으로 provider를 활성화하세요. 데이터는{" "}
-                    <code>~/.magicclaw/</code> 아래에 저장됩니다.
+                    <code>~/.magicclaw/config/</code> 아래에 저장됩니다.
                   </p>
                 </div>
               )}

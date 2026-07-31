@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
-import { getMagicClawHome } from "../common/magicclaw-home.js";
+import {
+  getConfigDir,
+  resolveConfigFilePath,
+} from "../common/magicclaw-home.js";
 import {
   DEFAULT_CURATOR_CONFIG,
   type CuratorConfig,
@@ -10,7 +12,7 @@ import {
 @Injectable()
 export class CuratorConfigStoreService {
   private path(): string {
-    return join(getMagicClawHome(), "curator-config.json");
+    return resolveConfigFilePath("curator-config.json");
   }
 
   getConfig(): CuratorConfig {
@@ -27,7 +29,7 @@ export class CuratorConfigStoreService {
   }
 
   saveConfig(config: CuratorConfig): void {
-    mkdirSync(getMagicClawHome(), { recursive: true });
+    mkdirSync(getConfigDir(), { recursive: true });
     writeFileSync(this.path(), JSON.stringify(config, null, 2), "utf8");
   }
 }

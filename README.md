@@ -139,7 +139,7 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 | Linux / macOS | `~/.magicclaw/`             |
 | Windows       | `%USERPROFILE%\.magicclaw\` |
 
-환경 변수 `MAGICCLAW_HOME`으로 변경할 수 있습니다. 설정 파일은 `MAGICCLAW_HOME/.env` (필수: `OPENAI_API_KEY`).
+환경 변수 `MAGICCLAW_HOME`으로 변경할 수 있습니다. 환경 변수는 `MAGICCLAW_HOME/.env` (필수: `OPENAI_API_KEY`), JSON 설정은 `MAGICCLAW_HOME/config/` (llm, mcp, memory, messenger, curator).
 
 **참고:** 일부 Node 빌드는 SQLite FTS5를 포함하지 않습니다. 이 경우 세션 검색은 자동으로 LIKE 폴백으로 동작하며 API는 정상 기동합니다.
 

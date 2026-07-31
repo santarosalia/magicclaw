@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -31,6 +32,28 @@ export function getMagicClawHome(): string {
     ? expandUserPath(fromEnv)
     : join(homedir(), ".magicclaw");
   return resolve(home);
+}
+
+/** JSON config files live under MAGICCLAW_HOME/config/. */
+export function getConfigDir(): string {
+  return join(getMagicClawHome(), "config");
+}
+
+/**
+ * Resolve a config file path under config/.
+ * If a legacy file still exists at the home root, migrate it once.
+ */
+export function resolveConfigFilePath(filename: string): string {
+  const configDir = getConfigDir();
+  const configPath = join(configDir, filename);
+  if (existsSync(configPath)) return configPath;
+
+  const legacyPath = join(getMagicClawHome(), filename);
+  if (existsSync(legacyPath)) {
+    mkdirSync(configDir, { recursive: true });
+    renameSync(legacyPath, configPath);
+  }
+  return configPath;
 }
 
 export function getMemoriesDir(userId: string): string {
