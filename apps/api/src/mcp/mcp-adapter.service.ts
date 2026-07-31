@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { McpServerConfig, McpToolInfo } from "./dto/mcp-server.dto.js";
-import {
-  McpAdapterConnectionPool,
-  SH_TOOL_NAME,
-} from "./mcp-adapter.pool.js";
+import { McpAdapterConnectionPool } from "./mcp-adapter.pool.js";
 import { formatMcpConnectionError } from "./mcp-connection-error.util.js";
 
 export interface ListToolsResult {
@@ -23,20 +20,18 @@ export interface CallToolResult {
 function langChainToolsToMcpToolInfo(
   tools: StructuredToolInterface[]
 ): McpToolInfo[] {
-  return tools
-    .filter((tool) => tool.name !== SH_TOOL_NAME)
-    .map((tool) => ({
-      name: tool.name,
-      description:
-        typeof tool.description === "string" ? tool.description : undefined,
-      inputSchema:
-        typeof (tool as { schema?: unknown }).schema === "object"
-          ? ((tool as { schema: Record<string, unknown> }).schema as Record<
-              string,
-              unknown
-            >)
-          : undefined,
-    }));
+  return tools.map((tool) => ({
+    name: tool.name,
+    description:
+      typeof tool.description === "string" ? tool.description : undefined,
+    inputSchema:
+      typeof (tool as { schema?: unknown }).schema === "object"
+        ? ((tool as { schema: Record<string, unknown> }).schema as Record<
+            string,
+            unknown
+          >)
+        : undefined,
+  }));
 }
 
 @Injectable()
@@ -50,7 +45,6 @@ export class McpAdapterService {
     close: () => Promise<void>;
   }> {
     const result = await this.pool.connect(servers, {
-      includeShTool: true,
       allowCache: true,
       strict: false,
     });
@@ -66,7 +60,6 @@ export class McpAdapterService {
     try {
       const result = await this.pool.connect([config], {
         strict: true,
-        includeShTool: false,
         allowCache: false,
       });
       await result.close();

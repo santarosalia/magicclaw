@@ -60,6 +60,19 @@ export function getMemoriesDir(userId: string): string {
   return join(getMagicClawHome(), "memories", sanitizePathSegment(userId));
 }
 
+/**
+ * Agent workspace root for relative paths.
+ * MAGICCLAW_WORKSPACE → ~/.magicclaw/workspace (if exists) → process.cwd()
+ */
+export function getWorkspaceRoot(): string {
+  const fromEnv = process.env.MAGICCLAW_WORKSPACE?.trim();
+  if (fromEnv) return resolve(expandUserPath(fromEnv));
+
+  const defaultWs = join(getMagicClawHome(), "workspace");
+  if (existsSync(defaultWs)) return defaultWs;
+  return process.cwd();
+}
+
 /** Filesystem-safe directory name for scoped ids like web:uuid or telegram:123. */
 export function sanitizePathSegment(segment: string): string {
   return segment

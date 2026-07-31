@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
-import { getMagicClawHome } from "./magicclaw-home.js";
+import { getMagicClawHome, getWorkspaceRoot } from "./magicclaw-home.js";
 
 const CONTEXT_FILE_NAMES = ["AGENTS.md", "SOUL.md", "CLAUDE.md"] as const;
 const MAX_FILE_BYTES = 32 * 1024;
@@ -9,9 +9,7 @@ const MAX_FILE_BYTES = 32 * 1024;
 @Injectable()
 export class ContextFilesService {
   getWorkspaceRoot(): string {
-    const fromEnv = process.env.MAGICCLAW_WORKSPACE?.trim();
-    if (fromEnv) return fromEnv;
-    return process.cwd();
+    return getWorkspaceRoot();
   }
 
   buildContextFilesBlock(): string {

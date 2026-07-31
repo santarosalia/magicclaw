@@ -3,10 +3,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { McpServerConfig } from "./dto/mcp-server.dto.js";
 import { isRemoteMcpServer } from "./dto/mcp-server.dto.js";
-import { shTool } from "./tool/sh.js";
 import { formatMcpConnectionError } from "./mcp-connection-error.util.js";
-
-export const SH_TOOL_NAME = "sh";
 
 type McpConnectionConfig =
   | {
@@ -25,8 +22,6 @@ type McpConnectionConfig =
 export interface McpConnectOptions {
   /** 연결 실패 시 예외를 던집니다 (도구 목록 조회용). */
   strict?: boolean;
-  /** 에이전트 실행용 내장 sh 도구를 포함합니다. */
-  includeShTool?: boolean;
   /** 실패한 연결 결과를 캐시하지 않습니다. */
   allowCache?: boolean;
 }
@@ -119,16 +114,11 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
     servers: McpServerConfig[],
     options: McpConnectOptions = {}
   ): Promise<McpConnectResult> {
-    const {
-      strict = false,
-      includeShTool = false,
-      allowCache = !strict,
-    } = options;
+    const { strict = false, allowCache = !strict } = options;
 
     if (servers.length === 0) {
-      const tools = includeShTool ? [shTool] : [];
       return {
-        tools,
+        tools: [],
         mcpToolCount: 0,
         errors: [],
         release: () => {},
@@ -141,9 +131,8 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
       const existing = this.pool.get(key);
       if (existing) {
         existing.lastUsed = Date.now();
-        const tools = this.composeTools(existing.tools, includeShTool);
         return {
-          tools,
+          tools: [...existing.tools],
           mcpToolCount: existing.mcpToolCount,
           errors: [],
           release: () => {
@@ -196,7 +185,6 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
       });
     }
 
-    const tools = this.composeTools(mcpTools, includeShTool);
     const release = () => {
       const entry = this.pool.get(key);
       if (entry) entry.lastUsed = Date.now();
@@ -206,7 +194,13 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
       await client.close().catch(() => {});
     };
 
-    return { tools, mcpToolCount, errors, release, close };
+    return {
+      tools: [...mcpTools],
+      mcpToolCount,
+      errors,
+      release,
+      close,
+    };
   }
 
   /** @deprecated use connect() */
@@ -214,19 +208,9 @@ export class McpAdapterConnectionPool implements OnModuleDestroy {
     servers: McpServerConfig[]
   ): Promise<{ tools: StructuredToolInterface[]; release: () => void }> {
     const result = await this.connect(servers, {
-      includeShTool: true,
       allowCache: true,
     });
     return { tools: result.tools, release: result.release };
-  }
-
-  private composeTools(
-    mcpTools: StructuredToolInterface[],
-    includeShTool: boolean
-  ): StructuredToolInterface[] {
-    if (!includeShTool) return [...mcpTools];
-    const names = new Set(mcpTools.map((tool) => tool.name));
-    return names.has(SH_TOOL_NAME) ? [...mcpTools] : [...mcpTools, shTool];
   }
 
   private cleanupIdleConnections(): void {
