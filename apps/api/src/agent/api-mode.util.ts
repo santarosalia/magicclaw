@@ -42,3 +42,40 @@ export function shouldUseResponsesApi(opts: {
   void opts.model;
   return hostMandatedUseResponsesApi(opts.baseURL);
 }
+
+export interface ChatOpenAIResolvedOptions {
+  model: string;
+  apiKey: string;
+  maxTokens: number;
+  streaming: boolean;
+  useResponsesApi: boolean;
+  configuration?: { baseURL: string };
+}
+
+/**
+ * Build ChatOpenAI constructor options.
+ *
+ * Hermes streams Responses via `responses.create(stream=true)` and rebuilds
+ * tool calls from SSE deltas. LangChain's `useResponsesApi` path does the same
+ * when `streaming: true` — so we never disable streaming for Responses hosts.
+ * Outbound history pairing is guarded separately by `repairToolCallPairs`.
+ */
+export function resolveChatOpenAIOptions(opts: {
+  model: string;
+  apiKey: string;
+  maxTokens: number;
+  baseURL?: string;
+}): ChatOpenAIResolvedOptions {
+  const useResponsesApi = shouldUseResponsesApi({
+    baseURL: opts.baseURL,
+    model: opts.model,
+  });
+  return {
+    model: opts.model,
+    apiKey: opts.apiKey,
+    maxTokens: opts.maxTokens,
+    streaming: true,
+    useResponsesApi,
+    configuration: opts.baseURL ? { baseURL: opts.baseURL } : undefined,
+  };
+}

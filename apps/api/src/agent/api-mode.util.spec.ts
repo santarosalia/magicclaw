@@ -1,5 +1,6 @@
 import {
   hostMandatedUseResponsesApi,
+  resolveChatOpenAIOptions,
   shouldUseResponsesApi,
 } from "./api-mode.util.js";
 
@@ -55,6 +56,33 @@ describe("api-mode.util", () => {
           model: "gpt-5.6-sol",
         })
       ).toBe(false);
+    });
+  });
+
+  describe("resolveChatOpenAIOptions", () => {
+    it("keeps streaming on for Responses hosts (Hermes-style SSE path)", () => {
+      const opts = resolveChatOpenAIOptions({
+        model: "gpt-5.6-sol",
+        apiKey: "sk-test",
+        maxTokens: 4096,
+        baseURL: "https://api.openai.com/v1",
+      });
+      expect(opts.useResponsesApi).toBe(true);
+      expect(opts.streaming).toBe(true);
+    });
+
+    it("keeps streaming on for chat-completions hosts", () => {
+      const opts = resolveChatOpenAIOptions({
+        model: "llama3",
+        apiKey: "not-needed",
+        maxTokens: 2048,
+        baseURL: "http://localhost:11434/v1",
+      });
+      expect(opts.useResponsesApi).toBe(false);
+      expect(opts.streaming).toBe(true);
+      expect(opts.configuration).toEqual({
+        baseURL: "http://localhost:11434/v1",
+      });
     });
   });
 });
