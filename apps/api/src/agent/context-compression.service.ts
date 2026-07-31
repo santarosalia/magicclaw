@@ -140,7 +140,7 @@ function expandForwardThroughTools(
   let end = exclusiveEnd;
   while (end > 0 && end < messages.length) {
     const prev = messages[end - 1];
-    if (!(prev instanceof AIMessage) || !prev.tool_calls?.length) break;
+    if (!AIMessage.isInstance(prev) || !prev.tool_calls?.length) break;
     const ids = new Set(
       prev.tool_calls
         .map((t) => t.id)

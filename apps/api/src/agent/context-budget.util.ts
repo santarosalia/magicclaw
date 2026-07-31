@@ -54,7 +54,8 @@ export function estimateTokens(text: string): number {
 
 export function estimateMessageTokens(message: BaseMessage): number {
   let tokens = estimateTokens(getMessageContentAsString(message));
-  if (message instanceof AIMessage) {
+  // AIMessageChunk is NOT instanceof AIMessage (extends BaseMessageChunk).
+  if (AIMessage.isInstance(message)) {
     for (const toolCall of message.tool_calls ?? []) {
       tokens += estimateTokens(JSON.stringify(toolCall));
     }
@@ -90,7 +91,7 @@ export function estimateToolsTokens(tools: StructuredToolInterface[]): number {
 function leadingDropCount(messages: BaseMessage[]): number {
   if (messages.length === 0) return 0;
   const first = messages[0];
-  if (first instanceof AIMessage && first.tool_calls?.length) {
+  if (AIMessage.isInstance(first) && first.tool_calls?.length) {
     const ids = new Set(
       first.tool_calls
         .map((toolCall) => toolCall.id)
@@ -122,10 +123,14 @@ function cloneWithContent(message: BaseMessage, content: string): BaseMessage {
       name: message.name,
     });
   }
-  if (message instanceof AIMessage) {
+  if (AIMessage.isInstance(message)) {
     return new AIMessage({
       content,
       tool_calls: message.tool_calls,
+      invalid_tool_calls: message.invalid_tool_calls,
+      additional_kwargs: message.additional_kwargs,
+      response_metadata: message.response_metadata,
+      id: message.id,
     });
   }
   return message;
@@ -182,6 +187,9 @@ export function shrinkMessagesToBudget(
  * Also strips Responses API raw `response_metadata.output` so LangChain rebuilds
  * function_call items from tool_calls + ToolMessages (raw output replay can leave
  * unpaired function_calls when history was trimmed or stubs were inserted).
+ *
+ * Must use AIMessage.isInstance — streamed turns are AIMessageChunk, and
+ * `chunk instanceof AIMessage` is false in @langchain/core 1.x.
  */
 export function repairToolCallPairs(messages: BaseMessage[]): BaseMessage[] {
   const pending = new Map<
@@ -192,7 +200,7 @@ export function repairToolCallPairs(messages: BaseMessage[]): BaseMessage[] {
   const result: BaseMessage[] = [];
 
   for (const message of messages) {
-    if (message instanceof AIMessage && message.tool_calls?.length) {
+    if (AIMessage.isInstance(message) && message.tool_calls?.length) {
       result.push(stripResponsesRawOutput(message));
       const insertAfter = result.length - 1;
       for (const toolCall of message.tool_calls) {
@@ -228,14 +236,20 @@ function stripResponsesRawOutput(message: AIMessage): AIMessage {
   const meta = message.response_metadata as
     | Record<string, unknown>
     | undefined;
-  if (!meta || !("output" in meta)) return message;
-  const { output: _output, ...rest } = meta;
+  const response_metadata =
+    meta && "output" in meta
+      ? (() => {
+          const { output: _output, ...rest } = meta;
+          return rest;
+        })()
+      : meta;
+  // Always normalize to AIMessage — streamed turns are AIMessageChunk.
   return new AIMessage({
     content: message.content,
     tool_calls: message.tool_calls,
     invalid_tool_calls: message.invalid_tool_calls,
     additional_kwargs: message.additional_kwargs,
-    response_metadata: rest,
+    response_metadata,
     id: message.id,
   });
 }
@@ -277,7 +291,7 @@ function truncatePass(
       const message = result[i];
       const isLast = i === result.length - 1;
       if (
-        !(message instanceof ToolMessage || message instanceof AIMessage) &&
+        !(message instanceof ToolMessage || AIMessage.isInstance(message)) &&
         !(isLast && message instanceof HumanMessage)
       ) {
         continue;

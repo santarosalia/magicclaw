@@ -1,4 +1,9 @@
-import { AIMessage, HumanMessage, ToolMessage } from "langchain";
+import {
+  AIMessage,
+  AIMessageChunk,
+  HumanMessage,
+  ToolMessage,
+} from "langchain";
 import { getMessageContentAsString } from "./agent.types.js";
 import {
   computeMessageTokenBudget,
@@ -128,6 +133,59 @@ describe("context-budget.util", () => {
     const repairedAi = repaired[0] as AIMessage;
     expect(repairedAi.response_metadata?.output).toBeUndefined();
     expect(repaired.filter((m) => m instanceof ToolMessage)).toHaveLength(1);
+  });
+
+  it("repairs streamed AIMessageChunk the same way (instanceof AIMessage is false)", () => {
+    // LangChain streaming concatenates to AIMessageChunk, which extends
+    // BaseMessageChunk — NOT AIMessage. repair must use isAIMessage().
+    const chunk = new AIMessageChunk({
+      content: "",
+      tool_calls: [
+        {
+          id: "call_yyjnpGakIRmFpnXlniegL256",
+          name: "search",
+          args: { q: "x" },
+        },
+      ],
+      response_metadata: {
+        model_provider: "openai",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call_yyjnpGakIRmFpnXlniegL256",
+            name: "search",
+            arguments: '{"q":"x"}',
+          },
+          {
+            type: "function_call",
+            call_id: "call_orphan_from_raw_output",
+            name: "memory",
+            arguments: "{}",
+          },
+        ],
+      },
+    });
+    expect(chunk instanceof AIMessage).toBe(false);
+
+    const repaired = repairToolCallPairs([
+      chunk,
+      new ToolMessage({
+        content: "ok",
+        tool_call_id: "call_yyjnpGakIRmFpnXlniegL256",
+      }),
+      new HumanMessage({ content: "next" }),
+    ]);
+
+    const repairedAi = repaired[0] as AIMessage;
+    expect(repairedAi.response_metadata?.output).toBeUndefined();
+    expect(repairedAi.tool_calls?.[0]?.id).toBe(
+      "call_yyjnpGakIRmFpnXlniegL256"
+    );
+    const toolMsgs = repaired.filter((m) => m instanceof ToolMessage);
+    expect(toolMsgs).toHaveLength(1);
+    expect((toolMsgs[0] as ToolMessage).tool_call_id).toBe(
+      "call_yyjnpGakIRmFpnXlniegL256"
+    );
   });
 
   it("shrinkMessagesToBudget always repairs broken tool pairs even under budget", () => {
