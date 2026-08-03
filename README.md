@@ -1,16 +1,134 @@
 # MagicClaw
 
-도구를 쓰는 개인 AI 에이전트 런타임입니다.
+도구를 쓰는 **개인 AI 에이전트 런타임**입니다.
+
+OpenAI 호환 LLM에 LangGraph 기반 툴 루프를 연결하고, 파일·셸·MCP 도구, 장기 메모리, 스킬, 세션, Telegram을 하나의 로컬 스택으로 제공합니다. 데이터는 `~/.magicclaw`에 두고, 웹 UI 또는 CLI로 실행·설정합니다.
+
+| | |
+| --- | --- |
+| 버전 | 0.1.0 |
+| 라이선스 | MIT |
+| 요구 사항 | Node.js 22+ |
+
+---
+
+## 주요 기능
+
+### 에이전트 채팅
+
+- Socket.IO 실시간 채팅 (웹) 및 Telegram 연동
+- LangGraph 기반 LLM ↔ 도구 루프 (최대 iteration / recursion 제한)
+- 도구 호출·결과·중간 응답·최종 응답 스트리밍
+- 시스템 프롬프트 + 프로젝트 컨텍스트 파일 + 스킬 인덱스 + 사용자/메모리 블록 주입
+- 컨텍스트 예산 관리: 메시지 수 초과 시 요약 압축, 토큰 overflow 시 shrink·재시도
+
+### 내장 도구 (코어)
+
+워크스페이스 루트(`MAGICCLAW_WORKSPACE` → `~/.magicclaw/workspace` → cwd) 기준으로 동작합니다.
+
+| 도구 | 설명 |
+| --- | --- |
+| `terminal` | 셸 명령 실행 |
+| `process` | 백그라운드 job 관리 |
+| `read_file` / `write_file` / `patch` | 파일 읽기·쓰기·패치 |
+| `search_files` | 파일 검색 |
+| `todo` | 작업 목록 |
+| memory 툴 | 내장 메모리 읽기/쓰기 |
+| `session_search` | 과거 세션 검색 |
+| `skill_manage` | 스킬 설치·편집·Hub 관리 |
+
+활성화된 MCP 도구도 함께 바인딩됩니다. 이름 충돌 시 코어 도구가 우선합니다.
+
+### LLM 설정
+
+- OpenAI 호환 API (`baseURL` + `model` + `apiKey`)
+- 다중 설정 등록, 기본 모델 지정
+- Context window 자동 감지 / 수동 / 환경 변수 강제
+- Ollama 등 로컬 엔드포인트 지원 (예: `http://localhost:11434/v1`)
+
+### MCP (Model Context Protocol)
+
+- **stdio** / **http** / **sse** 서버 등록
+- 활성화·비활성화, 도구 목록 조회
+- 에이전트 툴 루프에 자동 연결
+
+### 메모리
+
+**내장 메모리** (항상 사용 가능)
+
+- `MEMORY.md` / `USER.md` (`memories/<userId>/`)
+- 대화 팩트 자동 수집, 에이전트 memory 툴
+- 문자 수·컨텍스트 메시지 수 한도 설정
+
+**외부 provider — mem0**
+
+- **Platform**: `MEM0_API_KEY`로 클라우드 연동
+- **OSS**: 자체 LLM/임베더 + vector store (`memory` / `qdrant` / `pgvector`)
+
+### 스킬 & Curator
+
+- 디스크 스킬 + GitHub Hub 설치 (`owner/repo` 또는 `owner/repo/path`)
+- 에이전트가 `skill_manage`로 생성·편집·설치·제거
+- **Curator**: 에이전트 생성 스킬의 노후화(stale) → archive, pin/restore, 주기 리뷰
+
+### 세션
+
+- SQLite (`sessions.db`)에 세션·메시지 저장
+- 채널별 구분 (`web` / `telegram` / `api`)
+- FTS5 전문 검색 (미지원 Node 빌드는 LIKE 폴백)
+
+### 메신저
+
+- **Telegram** (grammy, long polling)
+- DM 정책: `pairing` / `allowlist` / `open` / `disabled`
+- 웹 채팅과 동일한 turn 파이프라인으로 응답
+
+### 웹 UI
+
+| 경로 | 기능 |
+| --- | --- |
+| `/` | 홈 — 주요 기능 진입 |
+| `/chat` | 실시간 채팅, 세션 사이드바, 툴 트레일, Todo |
+| `/llm` | LLM 설정 CRUD, 기본 모델, context window |
+| `/mcp` | MCP 서버 등록·관리 |
+| `/memory` | 내장 메모리·mem0 설정 |
+| `/messenger` | Telegram 토큰·DM 정책 |
+| `/skills` | Hub 설치, Curator 상태·실행·설정 |
+
+---
 
 ## 구조
 
-- **apps/api** – NestJS 백엔드
-  - 채팅·툴 루프, LLM 연동
-  - 메모리, 스킬, 세션, 메신저
-  - 외부 도구 서버(MCP) 등록·호출
-- **apps/web** – Next.js 프론트
-  - 채팅, LLM/메모리/스킬/메신저 설정, 도구 서버 관리
-- **apps/electron** – Electron 데스크톱 (선택)
+```
+apps/
+  api/        NestJS 백엔드 — 에이전트, REST, Socket.IO, Telegram   (:4000)
+  web/        Next.js 프론트 — 채팅·설정 UI                          (:3000)
+  electron/   Electron 데스크톱 셸 (선택)
+scripts/
+  bin/        magicclaw CLI
+  release/    릴리스 번들 빌드
+```
+
+**모노레포**: pnpm workspace  
+**인증**: 없음 (웹은 `localStorage` UUID 스코프, Telegram은 chatId 스코프)
+
+### 데이터 디렉터리
+
+`MAGICCLAW_HOME` (기본: Linux/macOS `~/.magicclaw`, Windows `%USERPROFILE%\.magicclaw`)
+
+```
+MAGICCLAW_HOME/
+  .env                 # 환경 변수 (필수: OPENAI_API_KEY)
+  config/              # llm, mcp, memory, messenger, curator JSON
+  sessions.db          # 세션·메시지 (SQLite)
+  memories/<user>/     # MEMORY.md, USER.md
+  skills/              # 스킬 + Hub lock + Curator state
+  workspace/           # 코어 툴 작업 루트
+  run/                 # pid, logs (CLI)
+  mem0-history.db      # mem0 OSS (사용 시)
+```
+
+---
 
 ## 설치
 
@@ -22,11 +140,11 @@
 
 지원 플랫폼 (GitHub Releases):
 
-| 플랫폼                | 아티팩트                                  |
-| --------------------- | ----------------------------------------- |
-| Linux x64             | `magicclaw-{version}-linux-x64.tar.gz`    |
+| 플랫폼 | 아티팩트 |
+| --- | --- |
+| Linux x64 | `magicclaw-{version}-linux-x64.tar.gz` |
 | macOS (Apple Silicon) | `magicclaw-{version}-darwin-arm64.tar.gz` |
-| Windows x64           | `magicclaw-{version}-windows-x64.tar.gz`  |
+| Windows x64 | `magicclaw-{version}-windows-x64.tar.gz` |
 
 ---
 
@@ -56,12 +174,12 @@ open http://localhost:3000   # macOS
 curl -fsSL .../install.sh | bash -s -- --version v0.1.0 --skip-setup
 ```
 
-| 옵션                   | 설명                                  |
-| ---------------------- | ------------------------------------- |
-| `--version TAG`        | 특정 릴리스 태그 설치 (예: `v0.1.0`)  |
+| 옵션 | 설명 |
+| --- | --- |
+| `--version TAG` | 특정 릴리스 태그 설치 (예: `v0.1.0`) |
 | `--magicclaw-home DIR` | 데이터 디렉터리 (기본 `~/.magicclaw`) |
-| `--skip-setup`         | `.env` 초기화 단계 생략               |
-| `--non-interactive`    | 프롬프트 없이 진행                    |
+| `--skip-setup` | `.env` 초기화 단계 생략 |
+| `--non-interactive` | 프롬프트 없이 진행 |
 
 ---
 
@@ -96,12 +214,12 @@ irm ... -OutFile install.ps1
 .\install.ps1 -Version v0.1.0 -SkipSetup
 ```
 
-| 옵션                   | 설명                                           |
-| ---------------------- | ---------------------------------------------- |
-| `-Version`, `-v TAG`   | 특정 릴리스 태그 설치 (예: `v0.1.0`)           |
-| `-MagicClawHome DIR`   | 데이터 디렉터리 (기본 `%USERPROFILE%\.magicclaw`) |
-| `-SkipSetup`           | `.env` 초기화 단계 생략                        |
-| `-NonInteractive`      | 프롬프트 없이 진행                             |
+| 옵션 | 설명 |
+| --- | --- |
+| `-Version`, `-v TAG` | 특정 릴리스 태그 설치 |
+| `-MagicClawHome DIR` | 데이터 디렉터리 |
+| `-SkipSetup` | `.env` 초기화 단계 생략 |
+| `-NonInteractive` | 프롬프트 없이 진행 |
 
 파이프 설치 시 환경 변수: `MAGICCLAW_VERSION`, `MAGICCLAW_HOME`, `MAGICCLAW_SKIP_SETUP=1`, `MAGICCLAW_NON_INTERACTIVE=1`
 
@@ -116,34 +234,25 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 **수동 설치 (tarball 직접 풀기):**
 
 1. [Releases](https://github.com/santarosalia/magicclaw/releases)에서 `magicclaw-*-windows-x64.tar.gz` 다운로드
-2. `%USERPROFILE%\.magicclaw\app` 에 압축 해제 (`tar -xzf ... -C ...`)
-3. PowerShell에서 `magicclaw setup && magicclaw start` (또는 `%USERPROFILE%\.magicclaw\app\bin\magicclaw.cmd setup`)
+2. `%USERPROFILE%\.magicclaw\app`에 압축 해제
+3. `magicclaw setup && magicclaw start`
 
 ---
 
 ### magicclaw CLI
 
-| 명령                        | 설명                       |
-| --------------------------- | -------------------------- |
-| `magicclaw start`           | API + Web 서버 시작        |
-| `magicclaw stop`            | 서버 중지                  |
-| `magicclaw status`          | 버전·프로세스 상태         |
-| `magicclaw setup`           | 데이터 홈 및 `.env` 초기화 |
-| `magicclaw update`          | 최신 릴리스로 업데이트     |
-| `magicclaw logs [api\|web]` | 로그 tail                  |
+| 명령 | 설명 |
+| --- | --- |
+| `magicclaw start` | API + Web 서버 시작 |
+| `magicclaw stop` | 서버 중지 |
+| `magicclaw status` | 버전·프로세스 상태 |
+| `magicclaw setup` | 데이터 홈 및 `.env` 초기화 |
+| `magicclaw update` | 최신 릴리스로 업데이트 |
+| `magicclaw logs [api\|web]` | 로그 tail |
 
-**데이터 위치**
+환경 변수 `MAGICCLAW_HOME`으로 데이터 위치를 변경할 수 있습니다.
 
-| OS            | 기본 경로                   |
-| ------------- | --------------------------- |
-| Linux / macOS | `~/.magicclaw/`             |
-| Windows       | `%USERPROFILE%\.magicclaw\` |
-
-환경 변수 `MAGICCLAW_HOME`으로 변경할 수 있습니다. 환경 변수는 `MAGICCLAW_HOME/.env` (필수: `OPENAI_API_KEY`), JSON 설정은 `MAGICCLAW_HOME/config/` (llm, mcp, memory, messenger, curator).
-
-**참고:** 일부 Node 빌드는 SQLite FTS5를 포함하지 않습니다. 이 경우 세션 검색은 자동으로 LIKE 폴백으로 동작하며 API는 정상 기동합니다.
-
----
+> 일부 Node 빌드는 SQLite FTS5를 포함하지 않습니다. 이 경우 세션 검색은 LIKE 폴백으로 동작하며 API는 정상 기동합니다.
 
 ### 업데이트
 
@@ -152,6 +261,46 @@ magicclaw update
 # 또는 install.sh 재실행
 curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/install.sh | bash
 ```
+
+---
+
+## 설정
+
+### 환경 변수 (`.env`)
+
+`.env.example` 참고. API는 `OPENAI_API_KEY`가 필수입니다.
+
+| 변수 | 설명 |
+| --- | --- |
+| `OPENAI_API_KEY` | 필수 — 채팅·mem0 OSS 기본 키 |
+| `MEM0_API_KEY` | mem0 Platform |
+| `MEM0_MODE` | `oss` \| `platform` |
+| `PORT` | API 포트 (기본 4000) |
+| `WEB_PORT` | Web 포트 (기본 3000) |
+| `WEB_ORIGIN` | CORS origin (기본 `http://localhost:3000`) |
+| `NEXT_PUBLIC_API_URL` | Web → API URL |
+| `AGENT_CONTEXT_WINDOW` | 전역 컨텍스트 윈도우 강제 (토큰) |
+| `MAGICCLAW_HOME` | 데이터 홈 |
+| `MAGICCLAW_WORKSPACE` | 코어 툴 워크스페이스 |
+| `GITHUB_TOKEN` | 스킬 Hub private/rate limit (선택) |
+
+### JSON 설정 (`MAGICCLAW_HOME/config/`)
+
+| 파일 | 내용 |
+| --- | --- |
+| `llm-configs.json` | LLM 설정 목록 + 기본 ID |
+| `mcp-servers.json` | MCP 서버 (stdio/http/sse) |
+| `memory-config.json` | 내장 메모리 한도 + mem0 |
+| `messenger-config.json` | Telegram 토큰·DM 정책 |
+| `curator-config.json` | Curator 주기·stale/archive 일수 |
+
+### 프로젝트 컨텍스트 파일
+
+워크스페이스 또는 홈에 두면 에이전트 컨텍스트에 주입됩니다 (파일당 최대 32KB).
+
+- `AGENTS.md`
+- `SOUL.md`
+- `CLAUDE.md`
 
 ---
 
@@ -166,14 +315,18 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 pnpm install
 ```
 
-### 환경 변수
-
-`.env.example` 참고. API는 `OPENAI_API_KEY`가 필수입니다.
-
 ```bash
 pnpm dev          # api + web 동시 실행
 pnpm dev:api      # http://localhost:4000
 pnpm dev:web      # http://localhost:3000
+```
+
+Electron (선택):
+
+```bash
+pnpm dev:electron
+pnpm build:electron
+pnpm dist:electron
 ```
 
 ### 릴리스 번들 빌드 (로컬)
@@ -185,17 +338,43 @@ bash scripts/release/build-bundle.sh
 
 GitHub에 `v*` 태그를 push하면 [`.github/workflows/release.yml`](.github/workflows/release.yml)이 OS별 tarball과 `install.sh`, `install.ps1`을 Releases에 업로드합니다.
 
-## 도구 서버 예시
+---
+
+## 도구 서버 예시 (MCP)
 
 - [@modelcontextprotocol/server-everything](https://www.npmjs.com/package/@modelcontextprotocol/server-everything)
 - [@modelcontextprotocol/server-filesystem](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
 
-명령: `npx`, 인자: `-y @modelcontextprotocol/server-everything` 형태로 추가하면 됩니다.
+웹 UI `/mcp`에서 명령 `npx`, 인자 `-y @modelcontextprotocol/server-everything` 형태로 추가하면 됩니다.
+
+---
+
+## API 개요
+
+| 경로 | 역할 |
+| --- | --- |
+| `GET /health` | 헬스체크 |
+| `GET /agent/tools` | 코어 + MCP 도구 목록 |
+| `/llm/*` | LLM 설정 CRUD |
+| `/mcp/*` | MCP 서버 관리 |
+| `/memory/*` | 메모리·mem0 설정 |
+| `/messenger/*` | Telegram 설정 |
+| `/skills/*` | 스킬 Hub·Curator |
+| `/sessions/*` | 세션·메시지 |
+| Socket.IO `/agent` | 실시간 채팅 (`chat` 이벤트) |
+
+---
 
 ## 기술 스택
 
-- **Backend**: NestJS, TypeScript, LangChain/LangGraph, mem0ai
-- **Frontend**: Next.js 15, React 19, Tailwind 4
+| 영역 | 기술 |
+| --- | --- |
+| Backend | NestJS 11, TypeScript, LangChain / LangGraph, Socket.IO, grammy, mem0ai |
+| Frontend | Next.js 15, React 19, Tailwind 4, Zustand |
+| Desktop | Electron 32 (선택) |
+| 저장소 | SQLite (`node:sqlite`), JSON config, Markdown 메모리·스킬 |
+
+---
 
 ## 라이선스
 
