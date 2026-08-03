@@ -20,7 +20,7 @@ OpenAI 호환 LLM에 LangGraph 기반 툴 루프를 연결하고, 파일·셸·M
 - LangGraph 기반 LLM ↔ 도구 루프 (최대 iteration / recursion 제한)
 - 도구 호출·결과·중간 응답·최종 응답 스트리밍
 - 시스템 프롬프트 + 프로젝트 컨텍스트 파일 + 스킬 인덱스 + 사용자/메모리 블록 주입
-- 컨텍스트 예산 관리: 메시지 수 초과 시 요약 압축, 토큰 overflow 시 shrink·재시도
+- [컨텍스트 관리 정책](#컨텍스트-관리-정책): 메시지 수 압축, 토큰 예산, overflow shrink·재시도
 
 ### 내장 도구 (코어)
 
@@ -127,6 +127,103 @@ MAGICCLAW_HOME/
   run/                 # pid, logs (CLI)
   mem0-history.db      # mem0 OSS (사용 시)
 ```
+
+---
+
+## 컨텍스트 관리 정책
+
+매 턴마다 대화 이력이 모델 context window를 넘지 않도록, **메시지 수 압축 → 토큰 예산 shrink → API 호출 시 재시도** 순으로 맞춥니다.
+
+### 1. Context window 결정
+
+우선순위 (앞이 이김):
+
+1. 환경 변수 `AGENT_CONTEXT_WINDOW`
+2. 활성 LLM 설정의 `contextWindow` (연결 시 API 조회 / 모델명 heuristic / 수동 / fallback)
+3. 기본값 **65536** 토큰
+
+소스 표시: `api` | `heuristic` | `manual` | `fallback` (웹 `/llm`에서 확인·갱신 가능)
+
+### 2. 토큰 예산
+
+메시지에 쓸 수 있는 예산:
+
+```
+messageBudget = contextWindow
+  − systemOverhead(시스템·메모리·스킬 등)
+  − max(툴 스키마 추정, AGENT_TOOL_SCHEMA_RESERVE)
+  − AGENT_OUTPUT_RESERVE
+  − AGENT_CONTEXT_SAFETY_MARGIN
+  − BASE_SYSTEM_PROMPT_TOKEN_RESERVE(800)
+```
+
+최소 예산은 512 토큰입니다.
+
+| 항목 | 기본값 | 환경 변수 |
+| --- | --- | --- |
+| Context window | 65536 (또는 LLM 설정) | `AGENT_CONTEXT_WINDOW` |
+| 출력 예약 | 4096 | `AGENT_OUTPUT_RESERVE` |
+| 툴 스키마 예약 | 8192 | `AGENT_TOOL_SCHEMA_RESERVE` |
+| 안전 마진 | 2048 | `AGENT_CONTEXT_SAFETY_MARGIN` |
+
+토큰 추정은 보수적 휴리스틱(`ceil(문자수/2 × 1.1)`)을 사용합니다.
+
+### 3. 메시지 수 압축 (`maxContextMessages`)
+
+`memory-config.json`의 `maxContextMessages` (기본 **40**)를 초과하면:
+
+1. 압축 전 메모리 훅 실행 (`onPreCompress`)
+2. 이력을 **head(초반) + middle(중간) + tail(최근)** 로 분할  
+   - tail 길이 ≈ `max(4, floor(maxContextMessages / 2))`  
+   - AI `tool_calls`와 대응 `ToolMessage`가 잘리지 않도록 쌍 단위로 경계 확장
+3. middle을 LLM으로 요약 → `[Compressed context from earlier turns]` 메시지 삽입  
+   - 활성 Todo가 있으면 요약 직후 재주입
+4. 요약 실패·LLM 없음 → middle 버리고 head+tail만 유지
+5. 이후 항상 토큰 예산 shrink 적용
+
+메시지 수가 한도 이하여도 토큰 예산 shrink는 매 턴 적용됩니다.
+
+### 4. 토큰 overflow shrink
+
+예산 초과 시 순서:
+
+1. **본문 Truncation** — Tool / AI / (마지막) Human 메시지 본문을 단계적으로 줄임 (`...[truncated for context limit]`)
+2. **앞쪽 드롭** — 가장 오래된 메시지부터 제거 (tool call 쌍은 함께 제거)
+3. 필요 시 truncation 한 번 더
+
+항상 **tool call ↔ tool result 쌍 수리**: 고아 ToolMessage 제거, 누락된 tool result는 stub(`tool result unavailable`)으로 보강. Responses API raw `output` 메타는 제거해 재직렬화합니다.
+
+### 5. API 호출 가드 (재시도)
+
+LLM invoke 직전에도 예산을 맞추고, context length 에러가 나면 최대 **6회** 재시도합니다.
+
+- 시도마다 예산을 `1 − attempt×0.12`로 축소
+- 안전 마진을 시도마다 +1024 토큰 증가
+- 그래도 실패하면 에러 전파
+
+### 6. 컨텍스트에 실리는 고정 블록
+
+| 블록 | 한도 / 비고 |
+| --- | --- |
+| 시스템 프롬프트 | 고정 예약 800 토큰 |
+| `AGENTS.md` / `SOUL.md` / `CLAUDE.md` | 파일당 최대 32KB |
+| `MEMORY.md` | 기본 2200자 (`memoryCharLimit`) |
+| `USER.md` | 기본 1375자 (`userCharLimit`) |
+| 스킬 인덱스 | 시스템 오버헤드에 포함 |
+| Todo | 압축 후에도 재주입 |
+
+메모리 문자 한도와 `maxContextMessages`는 `config/memory-config.json` 또는 웹 `/memory`에서 조정합니다.
+
+### 7. 턴(iteration) 예산
+
+컨텍스트와 별도로, 한 턴의 툴 루프 API 호출 수에도 상한이 있습니다.
+
+| 항목 | 기본값 | 환경 변수 |
+| --- | --- | --- |
+| 최대 iteration | 90 (+ grace 1회) | `AGENT_MAX_ITERATIONS` |
+| LangGraph recursion | 100 | `AGENT_RECURSION_LIMIT` |
+
+소진 시 도구 없이 요약 답변을 한 번 시도합니다.
 
 ---
 
@@ -280,6 +377,11 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 | `WEB_ORIGIN` | CORS origin (기본 `http://localhost:3000`) |
 | `NEXT_PUBLIC_API_URL` | Web → API URL |
 | `AGENT_CONTEXT_WINDOW` | 전역 컨텍스트 윈도우 강제 (토큰) |
+| `AGENT_OUTPUT_RESERVE` | 출력 예약 토큰 (기본 4096) |
+| `AGENT_TOOL_SCHEMA_RESERVE` | 툴 스키마 예약 토큰 (기본 8192) |
+| `AGENT_CONTEXT_SAFETY_MARGIN` | 안전 마진 토큰 (기본 2048) |
+| `AGENT_MAX_ITERATIONS` | 턴당 최대 API 호출 (기본 90) |
+| `AGENT_RECURSION_LIMIT` | LangGraph recursion 한도 (기본 100) |
 | `MAGICCLAW_HOME` | 데이터 홈 |
 | `MAGICCLAW_WORKSPACE` | 코어 툴 워크스페이스 |
 | `GITHUB_TOKEN` | 스킬 Hub private/rate limit (선택) |
@@ -290,7 +392,7 @@ curl -fsSL https://github.com/santarosalia/magicclaw/releases/latest/download/in
 | --- | --- |
 | `llm-configs.json` | LLM 설정 목록 + 기본 ID |
 | `mcp-servers.json` | MCP 서버 (stdio/http/sse) |
-| `memory-config.json` | 내장 메모리 한도 + mem0 |
+| `memory-config.json` | 내장 메모리 한도, `maxContextMessages`, mem0 |
 | `messenger-config.json` | Telegram 토큰·DM 정책 |
 | `curator-config.json` | Curator 주기·stale/archive 일수 |
 
