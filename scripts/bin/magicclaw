@@ -337,7 +337,7 @@ cmd_update() {
 
 cmd_help() {
   cat <<EOF
-MagicClaw — AI agent with MCP server management
+MagicClaw — Personal AI agent
 
 Usage: magicclaw <command> [options]
 

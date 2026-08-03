@@ -17,7 +17,7 @@ export default function Home() {
         <div>
           <Image src="/icon.png" alt="MagicClaw" width={256} height={256} />
           <h1 className="text-3xl font-bold tracking-tight">MagicClaw</h1>
-          <p className="text-muted-foreground mt-2">AI Agent with MCP</p>
+          <p className="text-muted-foreground mt-2">Personal AI agent</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Card className="transition-colors hover:bg-accent/50">

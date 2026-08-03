@@ -930,7 +930,7 @@ function Invoke-Update {
 
 function Show-Help {
     @"
-MagicClaw - AI agent with MCP server management
+MagicClaw - Personal AI agent
 
 Usage: magicclaw <command> [options]
 

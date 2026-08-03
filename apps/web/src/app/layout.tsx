@@ -6,7 +6,7 @@ import { GlobalConnectionStatus } from "@/components/GlobalConnectionStatus";
 
 export const metadata: Metadata = {
   title: "MagicClaw",
-  description: "AI agent with MCP tool management",
+  description: "Personal AI agent",
   icons: {
     icon: "/favicon.ico",
   },

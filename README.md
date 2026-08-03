@@ -1,15 +1,15 @@
 # MagicClaw
 
-**AI 에이전트** 프로젝트입니다. **MCP(Model Context Protocol)** 서버를 등록·관리하고, 채팅 시 해당 도구를 사용할 수 있습니다.
+도구를 쓰는 개인 AI 에이전트 런타임입니다.
 
 ## 구조
 
 - **apps/api** – NestJS 백엔드
-  - MCP 서버 CRUD, 도구 목록 조회
-  - OpenAI 채팅 완성 + MCP 도구 호출 (도구 사용 가능 에이전트)
-  - 메모리, 스킬, 세션, 텔레그램 메신저
+  - 채팅·툴 루프, LLM 연동
+  - 메모리, 스킬, 세션, 메신저
+  - 외부 도구 서버(MCP) 등록·호출
 - **apps/web** – Next.js 프론트
-  - MCP 서버 관리, 채팅, LLM/메모리/스킬/메신저 설정
+  - 채팅, LLM/메모리/스킬/메신저 설정, 도구 서버 관리
 - **apps/electron** – Electron 데스크톱 (선택)
 
 ## 설치
@@ -185,7 +185,7 @@ bash scripts/release/build-bundle.sh
 
 GitHub에 `v*` 태그를 push하면 [`.github/workflows/release.yml`](.github/workflows/release.yml)이 OS별 tarball과 `install.sh`, `install.ps1`을 Releases에 업로드합니다.
 
-## MCP 서버 예시
+## 도구 서버 예시
 
 - [@modelcontextprotocol/server-everything](https://www.npmjs.com/package/@modelcontextprotocol/server-everything)
 - [@modelcontextprotocol/server-filesystem](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
